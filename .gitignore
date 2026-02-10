@@ -1,0 +1,31 @@
+# General
+*.local
+.DS_Store
+*.log
+.env
+.env.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Node (Client & Server)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Client Build Output
+dist/
+
+# Rust (Core)
+core/target/
+core/pkg/
+target/
