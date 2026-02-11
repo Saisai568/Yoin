@@ -1,7 +1,5 @@
 // client/src/main.ts
-import './style.css'
-import { YoinClient } from './YoinClient';
-import init, { YoinDoc } from '../../core/pkg/core';
+import { initYoin, YoinClient } from './yoin';
 
 // 簡單的 Log 工具
 function log(msg: string) {
@@ -17,7 +15,7 @@ function log(msg: string) {
 
 async function bootstrap() {
     log("🚀 正在啟動 WASM...");
-    await init();
+    await initYoin();
     log("✅ WASM 載入完成");
 
     const client = new YoinClient({
@@ -27,7 +25,7 @@ async function bootstrap() {
     });
 
     // ==========================================
-    // 🟢 實作感知系統 (Awareness)
+    //  實作感知系統 (Awareness)
     // ==========================================
     
     // 1. 生成一個隨機的身分 (名稱與顏色)
@@ -80,7 +78,7 @@ async function bootstrap() {
         });
     });
     document.getElementById('doc-id')!.innerText = 'demo-doc-v1';
-    document.getElementById('connection-status')!.innerText = '🟢 連線中...';
+    document.getElementById('connection-status')!.innerText = ' 連線中...';
 
     // ==========================================
     // 1. 畫面更新邏輯 (當收到任何更新時觸發)
@@ -90,14 +88,14 @@ async function bootstrap() {
         const display = document.getElementById('display');
         if (display) display.innerText = text;
 
-        // B. 🟢 更新 Map (設定檔)
+        // B.  更新 Map (設定檔)
         const mapData = client.getMap('app-settings');
         const mapDisplay = document.getElementById('map-display');
         if (mapDisplay) {
             // 1. 顯示 JSON 字串 (你剛剛看到的結果)
             mapDisplay.innerText = JSON.stringify(mapData, null, 2);
             
-            // 2. 🌟 加上這段魔法：讓資料真正驅動畫面！
+            // 2. 🌟 加上這段：讓資料真正驅動畫面！
             if (mapData.themeColor) {
                 // 我們來改變整個 App 容器的頂部粗邊框顏色，效果最明顯
                 const appContainer = document.getElementById('app-container');
@@ -111,7 +109,7 @@ async function bootstrap() {
             }
         }
 
-        // C. 🟢 更新 Array (歷史紀錄)
+        // C.  更新 Array (歷史紀錄)
         const arrayData = client.getArray('action-logs');
         const arrayDisplay = document.getElementById('array-display');
         if (arrayDisplay) {
@@ -142,7 +140,7 @@ async function bootstrap() {
         };
     }
 
-    // 🟢 綁定清空按鈕
+    //  綁定清空按鈕
     const btnClear = document.getElementById('btn-clear');
     if (btnClear) {
         btnClear.onclick = () => {
@@ -152,7 +150,7 @@ async function bootstrap() {
         };
     }
 
-    // 🟢 測試 Map: 隨機改變顏色設定與更新時間
+    //  測試 Map: 隨機改變顏色設定與更新時間
     const btnUpdateMap = document.getElementById('btn-update-map');
     if (btnUpdateMap) {
         btnUpdateMap.onclick = () => {
@@ -165,22 +163,21 @@ async function bootstrap() {
         };
     }
 
-    // 🟢 測試 Array: 推入一筆新的時間紀錄
+    //  測試 Array: 推入一筆新的時間紀錄
     const btnPushArray = document.getElementById('btn-push-array');
     if (btnPushArray) {
         btnPushArray.onclick = () => {
             const timeStr = new Date().toLocaleTimeString();
-            // 這裡我們刻意推入一個 Object 測試複雜資料
             const logEntry = { action: 'CLICK', time: timeStr };
             
             client.pushArray('action-logs', logEntry);
             log(`➕ 已新增日誌紀錄`);
         };
     }
-    // 🟢 當網頁準備重新整理、關閉、或跳轉時觸發
+    //  當網頁準備重新整理、關閉、或跳轉時觸發
     window.addEventListener('beforeunload', () => {
         client.leaveAwareness();
     });
 }
 
-bootstrap().catch(err => { /* ... 錯誤處理保留 ... */ });
+bootstrap().catch(err => {});

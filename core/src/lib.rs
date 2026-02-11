@@ -3,7 +3,7 @@ use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
 // 在 lib.rs 最上方的 use 區塊，加入 Map, Array
 use yrs::{Doc, GetString, ReadTxn, StateVector, Text, Transact, Update, Map, Array};
-use yrs::types::ToJson; // 🟢 加入這行！把 ToJson 特徵帶入作用域
+use yrs::types::ToJson; //  加入這行！把 ToJson 特徵帶入作用域
 
 #[wasm_bindgen]
 pub struct YoinDoc {
@@ -123,9 +123,19 @@ impl YoinDoc {
         let txn = self.doc.transact();
         let any_data = map.to_json(&txn);
         
-        // 🟢 使用 serde_json 保證轉出 100% 標準的 JSON 字串
-        // 如果轉換失敗，則 fallback 回傳空的 JSON 物件 "{}"
+        //  使用 serde_json 保證轉出 100% 標準的 JSON 字串 如果轉換失敗，則 fallback 回傳空的 JSON 物件 "{}"
         serde_json::to_string(&any_data).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// 只讀取 Map 中的特定 Key，避免全量序列化
+    pub fn map_get(&self, map_name: &str, key: &str) -> String {
+        let map = self.doc.get_or_insert_map(map_name);
+        let txn = self.doc.transact();
+        
+        match map.get(&txn, key) {
+            Some(val) => serde_json::to_string(&val.to_json(&txn)).unwrap_or_else(|_| "null".to_string()),
+            None => "null".to_string(),
+        }
     }
 
     // ==========================================
@@ -148,8 +158,18 @@ impl YoinDoc {
         let arr = self.doc.get_or_insert_array(array_name);
         let txn = self.doc.transact();
         let any_data = arr.to_json(&txn);
-        
-        // 🟢 同樣使用 serde_json
+    
         serde_json::to_string(&any_data).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// 只讀取 Array 中的特定 Index
+    pub fn array_get(&self, array_name: &str, index: u32) -> String {
+        let arr = self.doc.get_or_insert_array(array_name);
+        let txn = self.doc.transact();
+        
+        match arr.get(&txn, index) {
+            Some(val) => serde_json::to_string(&val.to_json(&txn)).unwrap_or_else(|_| "null".to_string()),
+            None => "null".to_string(),
+        }
     }
 }

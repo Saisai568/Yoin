@@ -5,14 +5,14 @@
  * 接收一個 Uint8Array (二進制資料)，回傳 void (或是 Promise<void>)
  */
 type MessageCallback = (data: Uint8Array) => void | Promise<void>;
-type ConnectCallback = () => void; // 🟢 新增連線成功的回呼型別
+type ConnectCallback = () => void; //  新增連線成功的回呼型別
 
 export class NetworkProvider {
     private url: string;
     private socket: WebSocket | null = null;
     private onMessageReceived: MessageCallback;
-    private onConnect: ConnectCallback; // 🟢 新增連線成功的回呼函數
-    // 🟢 新增：離線佇列，用來存放斷線時產生的 updates
+    private onConnect: ConnectCallback; //  新增連線成功的回呼函數
+    //  新增：離線佇列，用來存放斷線時產生的 updates
     private messageQueue: Uint8Array[] = [];
 
     // 🔴 這裡的參數多了一個 onConnect
@@ -28,12 +28,12 @@ export class NetworkProvider {
         this.socket.binaryType = 'arraybuffer'; 
 
         this.socket.onopen = () => {
-            console.log("🟢 [Network] Connected to Sync Server");
+            console.log(" [Network] Connected to Sync Server");
             
-            // 🟢 1. 觸發初始同步 (告訴 YoinClient 可以發送 State Vector 了)
+            //  1. 觸發初始同步 (告訴 YoinClient 可以發送 State Vector 了)
             this.onConnect();
 
-            // 🟢 新增：連線成功時，把積壓在佇列裡的更新全部發送出去
+            //  新增：連線成功時，把積壓在佇列裡的更新全部發送出去
             if (this.messageQueue.length > 0) {
                 console.log(`🚀 [Network] Flushing ${this.messageQueue.length} queued updates...`);
                 this.messageQueue.forEach(update => {
