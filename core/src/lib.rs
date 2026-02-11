@@ -1,7 +1,9 @@
 use wasm_bindgen::prelude::*;
-use yrs::{Doc, GetString, ReadTxn, StateVector, Text, Transact, Update};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
+// 在 lib.rs 最上方的 use 區塊，加入 Map, Array
+use yrs::{Doc, GetString, ReadTxn, StateVector, Text, Transact, Update, Map, Array};
+use yrs::types::ToJson; // 🟢 加入這行！把 ToJson 特徵帶入作用域
 
 #[wasm_bindgen]
 pub struct YoinDoc {
@@ -80,5 +82,74 @@ impl YoinDoc {
         // 3. 匯出「剛才那個動作」產生的增量
         let txn = self.doc.transact();
         txn.encode_diff_v1(&sv_before)
+    }
+
+    /// 刪除指定範圍的文字，並回傳增量 Update
+    pub fn delete_text_and_get_update(&self, name: &str, index: u32, length: u32) -> Vec<u8> {
+        // 1. 記錄動作前的狀態
+        let sv_before = { self.doc.transact().state_vector() };
+        
+        // 2. 執行刪除動作
+        {
+            let text = self.doc.get_or_insert_text(name);
+            let mut txn = self.doc.transact_mut();
+            // 呼叫 yrs 內建的 remove 方法
+            text.remove_range(&mut txn, index, length); 
+        }
+        
+        // 3. 計算並回傳 Diff
+        self.doc.transact().encode_diff_v1(&sv_before)
+    }
+
+    // ==========================================
+    // 📦 MAP (鍵值對) 操作 API
+    // ==========================================
+
+    /// 設定 Map 中的 Key-Value，並回傳增量 Update
+    pub fn map_set_and_get_update(&self, map_name: &str, key: &str, value: &str) -> Vec<u8> {
+        let sv_before = { self.doc.transact().state_vector() };
+        {
+            let map = self.doc.get_or_insert_map(map_name);
+            let mut txn = self.doc.transact_mut();
+            map.insert(&mut txn, key, value); // 將值寫入 Map
+        }
+        // 回傳此動作產生的 Diff
+        self.doc.transact().encode_diff_v1(&sv_before)
+    }
+
+    /// 取得整個 Map 的內容 (以 JSON 字串格式回傳)
+    pub fn map_get_all(&self, map_name: &str) -> String {
+        let map = self.doc.get_or_insert_map(map_name);
+        let txn = self.doc.transact();
+        let any_data = map.to_json(&txn);
+        
+        // 🟢 使用 serde_json 保證轉出 100% 標準的 JSON 字串
+        // 如果轉換失敗，則 fallback 回傳空的 JSON 物件 "{}"
+        serde_json::to_string(&any_data).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    // ==========================================
+    // 📚 ARRAY (陣列) 操作 API
+    // ==========================================
+
+    /// 在 Array 尾端推入新資料，並回傳增量 Update
+    pub fn array_push_and_get_update(&self, array_name: &str, value: &str) -> Vec<u8> {
+        let sv_before = { self.doc.transact().state_vector() };
+        {
+            let arr = self.doc.get_or_insert_array(array_name);
+            let mut txn = self.doc.transact_mut();
+            arr.push_back(&mut txn, value); // 推入 Array
+        }
+        self.doc.transact().encode_diff_v1(&sv_before)
+    }
+
+    /// 取得整個 Array 的內容 (以 JSON 字串格式回傳)
+    pub fn array_get_all(&self, array_name: &str) -> String {
+        let arr = self.doc.get_or_insert_array(array_name);
+        let txn = self.doc.transact();
+        let any_data = arr.to_json(&txn);
+        
+        // 🟢 同樣使用 serde_json
+        serde_json::to_string(&any_data).unwrap_or_else(|_| "[]".to_string())
     }
 }

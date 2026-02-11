@@ -8,9 +8,11 @@
 
 * **Local-First Architecture**: Data is stored locally in IndexedDB first. Applications work offline by default.
 * **Real-time Synchronization**: Seamless state syncing between multiple clients via WebSocket.
-* **Incremental Updates**: Only sends tiny delta updates (bytes) instead of full snapshots, drastically reducing bandwidth.
+* **Efficient Binary Protocol**: Low-overhead communication using custom 1-byte headers and a 3-way handshake for reliable state synchronization.
+* **Resilient Sync Engine**: Features an offline queue for disconnected editing and debounced persistence for optimal local storage performance.
 * **High Performance**: Core logic written in **Rust** and compiled to **WebAssembly (WASM)**.
-* **Conflict Resolution**: Built on top of `yrs` (a Rust port of Yjs) to handle complex merge conflicts automatically.
+* **Complex Data Support**: Beyond text, natively handles Maps and Arrays for sophisticated application state.
+* **Awareness & Presence**: Real-time monitoring of active users with automated cleanup and status broadcasting.
 * **TypeScript SDK**: Fully typed client SDK for a developer-friendly experience.
 
 ## 🏗 Architecture
@@ -75,9 +77,9 @@ The system consists of three main layers:
 ## 📝 Roadmap
 
 * [x] **Phase 1: MVP** (Basic Sync, Persistence, Network)
-* [x] **Phase 2: Optimization** (Incremental Updates, TypeScript Refactor)
-* [ ] **Phase 3: Framework Polish** (Initial Sync Protocol, Awareness/Cursor)
-* [ ] **Phase 4: Release** (NPM Package, React Hooks)
+* [x] **Phase 2: Industrialization** (Binary Protocol, Offline Queue, Map/Array Support, Awareness System)
+* [ ] **Phase 3: DX & UX Polish** (Live Cursors, Network State UI, SDK Modularization)
+* [ ] **Phase 4: Ecosystem & Security** (React/Vue Hooks, npm Release, Auth & Room Isolation)
 
 ## 🤝 Contributing
 

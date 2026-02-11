@@ -82,27 +82,52 @@
     </style>
   </head>
   <body>
-    <h1>Local-First Sync Demo</h1>
-    
-    <div class="status-bar">
-      <span>文件 ID: <code id="doc-id">loading...</code></span>
-      <span id="connection-status" class="status-indicator offline">🔴 離線</span>
-    </div>
+    <div id="app-container">
+      <h1>Local-First Sync Demo</h1>
+      
+      <div class="status-bar">
+        <div>
+          <span>文件 ID: <code id="doc-id">loading...</code></span>
+          <span id="connection-status" class="status-indicator offline" style="margin-left: 15px;">🔴 離線</span>
+        </div>
+        
+        <div id="awareness-container" style="display: flex; gap: 8px; align-items: center;">
+          <span style="font-size: 0.9rem; color: #666; margin-right: 5px;">線上:</span>
+          </div>
+      </div>
 
-    <div class="editor-container">
-      <h3>共享筆記內容：</h3>
-      <div id="display">等待連線與載入...</div>
+      <div class="editor-container">
+        <h3>共享筆記內容：</h3>
+        <div id="display">等待連線與載入...</div>
 
-      <div class="controls">
-        <button id="btn-insert">✍️ 寫入測試文字</button>
-        <button id="btn-clear" style="background-color: #e74c3c;">🗑️ 清空 (未實作)</button>
+        <div class="controls">
+          <button id="btn-insert">✍️ 寫入測試文字</button>
+          <button id="btn-clear" style="background-color: #e74c3c;">🗑️ 清空內容</button>
+        </div>
+      </div>
+      
+      <div class="editor-container" style="margin-top: 20px;">
+        <h3>⚙️ 應用程式設定 (Map)：</h3>
+        <pre id="map-display" style="background: #f4f4f4; padding: 10px; border-radius: 4px; min-height: 50px;">{}</pre>
+        <div class="controls">
+          <button id="btn-update-map" style="background-color: #9b59b6;">🎨 隨機切換主題顏色</button>
+        </div>
+      </div>
+
+      <div class="editor-container" style="margin-top: 20px;">
+        <h3>📋 歷史操作日誌 (Array)：</h3>
+        <ul id="array-display" style="background: #f4f4f4; padding: 15px 30px; border-radius: 4px; min-height: 50px; margin: 0;">
+          <li>等待資料...</li>
+        </ul>
+        <div class="controls" style="margin-top: 15px;">
+          <button id="btn-push-array" style="background-color: #f39c12;">➕ 紀錄現在時間</button>
+        </div>
+      </div>
+
+      <div class="logs" id="log-container">
+        <div class="log-entry">系統初始化中...</div>
       </div>
     </div>
-
-    <div class="logs" id="log-container">
-      <div class="log-entry">系統初始化中...</div>
-    </div>
-
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
