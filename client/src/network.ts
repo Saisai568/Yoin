@@ -5,40 +5,48 @@
  * 接收一個 Uint8Array (二進制資料)，回傳 void (或是 Promise<void>)
  */
 type MessageCallback = (data: Uint8Array) => void | Promise<void>;
+type ConnectCallback = () => void; // 🟢 新增連線成功的回呼型別
 
 export class NetworkProvider {
     private url: string;
     private socket: WebSocket | null = null;
     private onMessageReceived: MessageCallback;
+    private onConnect: ConnectCallback; // 🟢 新增連線成功的回呼函數
+    // 🟢 新增：離線佇列，用來存放斷線時產生的 updates
+    private messageQueue: Uint8Array[] = [];
 
-    constructor(url: string, onMessageReceived: MessageCallback) {
+    // 🔴 這裡的參數多了一個 onConnect
+    constructor(url: string, onConnect: ConnectCallback, onMessageReceived: MessageCallback) {
         this.url = url;
+        this.onConnect = onConnect;
         this.onMessageReceived = onMessageReceived;
         this.connect();
     }
 
     private connect(): void {
         this.socket = new WebSocket(this.url);
-        
-        // 關鍵：明確告訴 TS 和瀏覽器，我們傳輸的是二進制陣列緩衝區
         this.socket.binaryType = 'arraybuffer'; 
 
         this.socket.onopen = () => {
             console.log("🟢 [Network] Connected to Sync Server");
-            // TODO: 未來這裡可以加入傳送 "Awareness" 或 "Auth Token" 的邏輯
+            
+            // 🟢 1. 觸發初始同步 (告訴 YoinClient 可以發送 State Vector 了)
+            this.onConnect();
+
+            // 🟢 新增：連線成功時，把積壓在佇列裡的更新全部發送出去
+            if (this.messageQueue.length > 0) {
+                console.log(`🚀 [Network] Flushing ${this.messageQueue.length} queued updates...`);
+                this.messageQueue.forEach(update => {
+                    this.socket?.send(update);
+                });
+                // 清空佇列
+                this.messageQueue = [];
+            }
         };
 
         this.socket.onmessage = (event: MessageEvent) => {
-            // event.data 在 binaryType = 'arraybuffer' 時會是 ArrayBuffer
-            // 我們需要將其轉為 Uint8Array 才能讓 WASM 讀取
             if (event.data instanceof ArrayBuffer) {
-                const update = new Uint8Array(event.data);
-                // console.log(`📥 [Network] Received update: ${update.length} bytes`);
-                
-                // 呼叫外部傳入的回呼函數 (交給 YoinClient 處理)
-                this.onMessageReceived(update);
-            } else {
-                console.warn("Received non-binary data, ignoring.");
+                this.onMessageReceived(new Uint8Array(event.data));
             }
         };
 
@@ -58,10 +66,12 @@ export class NetworkProvider {
      */
     public broadcast(update: Uint8Array): void {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-            // console.log(`📤 [Network] Broadcasting: ${update.length} bytes`);
+            // 網路暢通，直接發送
             this.socket.send(update);
         } else {
-            console.warn("⚠️ [Network] Socket not open, update dropped (Need Queue mechanism in future)");
+            // 🔴 修改：網路斷開時，存入佇列而不是丟棄
+            console.warn(`⚠️ [Network] Offline. Queuing update (${update.length} bytes)`);
+            this.messageQueue.push(update);
         }
     }
 }

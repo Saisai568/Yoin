@@ -1,5 +1,5 @@
 // client/src/main.ts
-import './style.css' // 如果你有用 CSS 檔案的話
+import './style.css'
 import { YoinClient } from './YoinClient';
 import init, { YoinDoc } from '../../core/pkg/core';
 

@@ -1,7 +1,12 @@
-import { YoinDoc } from '../../core/pkg/core'; // 引入 WASM 定義
+import { YoinDoc } from '../../core/pkg/core';         // 引入 WASM 定義
 import { StorageAdapter } from './storage';            // 引入我們剛改好的 Storage
 import { NetworkProvider } from './network';           // 引入我們剛改好的 Network
-import type { YoinConfig } from './types';                  // 引入設定檔介面TYPE
+import type { YoinConfig } from './types';             // 引入設定檔介面TYPE
+
+// 🟢 定義通訊協議的 Message Type 常數
+const MSG_SYNC_STEP_1 = 0; // 傳送 State Vector
+const MSG_SYNC_STEP_2 = 1; // 傳送 Diff 或 Update
+const MSG_SYNC_STEP_1_REPLY = 2; // 🟢 新增：「收到，順便附上我的進度，你也把你多出來的資料給我」
 
 export class YoinClient {
     private doc: YoinDoc;
@@ -12,54 +17,68 @@ export class YoinClient {
     // 用來存放訂閱者 (UI 更新函數) 的陣列
     private listeners: ((text: string) => void)[] = [];
 
+    // 🟢 新增：用來記錄計時器的 ID
+    private saveTimeout: number | undefined;
+
     constructor(config: YoinConfig) {
         this.config = config;
-        
-        // 1. 初始化 WASM 核心
-        // 注意：這裡假設 init() 已經在外部呼叫過了，或者 YoinDoc 不需要非同步建立
         this.doc = new YoinDoc();
-
-        // 2. 初始化持久化層
         this.storage = new StorageAdapter(config.dbName);
 
-        // 3. 初始化網路層
-        // 定義：當從網路收到別人傳來的 Update (二進制) 時要做什麼？
-        this.network = new NetworkProvider(config.url, async (remoteUpdate) => {
-            console.log(`📥 [Network] Received update: ${remoteUpdate.length} bytes`);
-            
-            // A. 更新 WASM 核心狀態
-            this.doc.apply_update(remoteUpdate);
-            
-            // B. 通知 UI 更新
-            this.notifyListeners();
-            
-            // C. 順便存檔 (保持本地資料最新)
-            await this.persist();
-        });
+        // 🔴 升級網路層的事件處理邏輯
+        this.network = new NetworkProvider(
+            config.url,
+            // 事件 1：剛連上線時 (不變)
+            () => {
+                const sv = this.doc.get_state_vector();
+                this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1, sv));
+                console.log("🔄 [Sync] Sent initial State Vector");
+            },
+            // 事件 2：收到網路訊息時 (大升級)
+            async (rawMsg: Uint8Array) => {
+                const type = rawMsg[0];
+                const payload = rawMsg.slice(1);
 
-        // 4. 啟動時嘗試從本地資料庫載入舊資料
+                if (type === MSG_SYNC_STEP_1) {
+                    // 【收到新朋友的連線請求】
+                    // 1. 給他缺少的資料
+                    const diff = this.doc.export_diff(payload);
+                    this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_2, diff));
+                    
+                    // 2. 🟢 關鍵修復：告訴他「我目前的進度」，請他把我也缺少的資料傳過來
+                    const mySV = this.doc.get_state_vector();
+                    this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1_REPLY, mySV));
+
+                } else if (type === MSG_SYNC_STEP_1_REPLY) {
+                    // 【🟢 收到舊朋友回傳的進度要求】
+                    // 計算並發送他缺少的資料
+                    const diff = this.doc.export_diff(payload);
+                    this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_2, diff));
+
+                } else if (type === MSG_SYNC_STEP_2) {
+                    // 【收到實質的更新資料】
+                    this.doc.apply_update(payload);
+                    this.notifyListeners();
+                    this.scheduleSave();
+                }
+            }
+        );
+
         this.loadFromDisk();
     }
-
     /**
      * 核心方法：插入文字
      * 這是使用者唯一需要呼叫的寫入方法
      */
     public async insertText(index: number, text: string) {
-        // 1. 呼叫 Rust: 插入並取得「增量更新 (Delta)」
-        // 這是我們為了效能優化特別寫的 Rust 方法
         const deltaUpdate = this.doc.insert_and_get_update("content", index, text);
-
-        console.log(`📤 [Client] Generated delta: ${deltaUpdate.length} bytes`);
-
-        // 2. 廣播這個小小的 Delta 給其他人
-        this.network.broadcast(deltaUpdate);
-
-        // 3. 更新 UI (讓自己看到)
+        
+        // 🔴 修改：平常打字送出的 Update，也是屬於 TYPE 1 的資料
+        const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
+        this.network.broadcast(msg);
+        
         this.notifyListeners();
-
-        // 4. 存檔 (存全量 Snapshot)
-        await this.persist();
+        this.scheduleSave();
     }
 
     /**
@@ -97,10 +116,7 @@ export class YoinClient {
      * 私有方法：儲存全量快照到 IndexedDB
      */
     private async persist() {
-        // 1. 先從 WASM 取出資料 (這步在 Client 做)
         const snapshot = this.doc.export_update();
-        
-        // 2. 再把資料傳給 Storage (這步只負責存)
         await this.storage.save(this.config.docId, snapshot);
     }
     /**
@@ -110,4 +126,27 @@ export class YoinClient {
         const text = this.getText();
         this.listeners.forEach(listener => listener(text));
     }
+
+    // 🟢 新增：防抖存檔機制
+    private scheduleSave() {
+        // 如果已經有一個計時器在倒數，就取消它（重新計時）
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+        }
+        
+        // 設定新的計時器，1000 毫秒 (1秒) 後執行真正的存檔
+        this.saveTimeout = window.setTimeout(async () => {
+            await this.persist();
+            console.log("💾 [Storage] Auto-saved to IndexedDB (Debounced)");
+        }, 1000);
+    }
+
+    // 🟢 新增私有小工具：負責幫資料戴上 1 byte 的「帽子」
+    private encodeMessage(type: number, payload: Uint8Array): Uint8Array {
+        const msg = new Uint8Array(payload.length + 1);
+        msg[0] = type;           // 寫入 Header
+        msg.set(payload, 1);     // 寫入 Payload (從 index 1 開始放)
+        return msg;
+    }
+
 }
