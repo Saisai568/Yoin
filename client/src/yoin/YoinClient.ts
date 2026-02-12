@@ -1,7 +1,7 @@
-import { YoinDoc } from '../../../core/pkg/core';               // 引入 WASM 定義
-import { StorageAdapter } from './storage';                     // 引入我們剛改好的 Storage
-import { NetworkProvider } from './network';                    // 引入我們剛改好的 Network
-import type { YoinConfig, AwarenessState } from "./types";      // 引入設定檔介面TYPE
+import { YoinDoc } from '../../../core/pkg/core';                           // 引入 WASM 定義
+import { StorageAdapter } from './storage';                                 // 引入我們剛改好的 Storage
+import { NetworkProvider } from './network';                                // 引入我們剛改好的 Network
+import type { YoinConfig, AwarenessState, NetworkStatus } from "./types";   // 引入設定檔介面TYPE
 
 // 1. 定義通訊協議的 Message Type 常數
 const MSG_SYNC_STEP_1 = 0;        // Type 0 傳送 State Vector
@@ -28,34 +28,51 @@ export class YoinClient {
 
     // 新增一個計時器，用來做廣播的防抖 (Throttling)
     private awarenessTimeout: number | undefined;
+    private pendingAwarenessUpdate: boolean = false;
 
-    // 感知系統的公開 API
+    private networkListeners: ((status: NetworkStatus) => void)[] = [];
+    
     public setAwarenessState(state: Record<string, any>) {
-        // 確保符合 AwarenessState 介面規範
         const fullState: AwarenessState = { 
             ...state, 
             clientId: this.myClientId, 
             timestamp: Date.now() 
         } as AwarenessState;
-
-        // 1. 更新本地狀態
+        
+        // 1. 本地 UI 狀態
         this.awarenessStates.set(this.myClientId, fullState);
         this.notifyAwarenessListeners();
 
-        // 2. 網路廣播採用「節流 (Throttling)」機制
-        // 如果 100ms 內有多次更新，只會發送最後一次的狀態
-        if (this.awarenessTimeout) {
-            clearTimeout(this.awarenessTimeout);
+        // 2. 真正的「節流 (Throttle)」機制
+        // 開發者沒設定的話，預設使用 30ms (大約 33 FPS，游標會極度滑順)
+        const throttleMs = this.config.awarenessThrottleMs ?? 30; 
+
+        if (!this.awarenessTimeout) {
+            // 如果目前「沒有」在冷卻中，立刻發送網路廣播！
+            this.broadcastAwareness(fullState);
+
+            // 接著進入冷卻期
+            this.awarenessTimeout = window.setTimeout(() => {
+                this.awarenessTimeout = undefined; // 解除冷卻
+                
+                // 檢查冷卻期間，滑鼠是不是有繼續移動？有的話，補發最後的最新狀態
+                if (this.pendingAwarenessUpdate) {
+                    this.pendingAwarenessUpdate = false;
+                    const latestState = this.awarenessStates.get(this.myClientId);
+                    if (latestState) this.broadcastAwareness(latestState);
+                }
+            }, throttleMs);
+        } else {
+            // 如果還在冷卻中，不急著發送，只標記「有新動態」
+            this.pendingAwarenessUpdate = true;
         }
-        
-        this.awarenessTimeout = window.setTimeout(() => {
-            const latestState = this.awarenessStates.get(this.myClientId);
-            if (latestState) {
-                const jsonStr = JSON.stringify(latestState);
-                const payload = new TextEncoder().encode(jsonStr);
-                this.network.broadcast(this.encodeMessage(MSG_AWARENESS, payload));
-            }
-        }, 100); // 100ms 的聚合視窗
+    }
+
+    // 抽離出來的輔助方法，讓程式碼更簡潔
+    private broadcastAwareness(state: AwarenessState) {
+        const jsonStr = JSON.stringify(state);
+        const payload = new TextEncoder().encode(jsonStr);
+        this.network.broadcast(this.encodeMessage(MSG_AWARENESS, payload));
     }
 
     public subscribeAwareness(callback: (states: Map<string, AwarenessState>) => void) {
@@ -63,7 +80,7 @@ export class YoinClient {
         callback(this.awarenessStates);
     }
 
-    private notifyAwarenessListeners() {
+    public notifyAwarenessListeners() {
         this.awarenessListeners.forEach(listener => listener(this.awarenessStates));
     }
     // 主動廣播下線通知
@@ -82,13 +99,21 @@ export class YoinClient {
     }
     constructor(config: YoinConfig) {
         this.config = config;
+        this.myClientId = Math.random().toString(36).substring(2, 10);
         this.doc = new YoinDoc();
         this.storage = new StorageAdapter(config.dbName);
 
-        // 升級網路層的事件處理邏輯
+        // 🟢 將 docId 轉化為 URL 參數，實現房間隔離
+        // 如果原本是 ws://localhost:8080，會變成 ws://localhost:8080/?room=demo-doc-v1
+        const roomUrl = new URL(config.url);
+        roomUrl.searchParams.append('room', config.docId);
+
         this.network = new NetworkProvider(
-            config.url,
-            // 事件 1：剛連上線時 (不變)
+            roomUrl.toString(),
+
+            // ==========================================
+            // 事件 1：剛連上線時
+            // ==========================================
             () => {
                 const sv = this.doc.get_state_vector();
                 this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1, sv));
@@ -96,9 +121,14 @@ export class YoinClient {
 
                 // 連線時，順便廣播一次自己的最新狀態給所有人
                 const myState = this.awarenessStates.get(this.myClientId);
-                if (myState) this.setAwarenessState(myState);
+                if (myState) {
+                    this.setAwarenessState(myState);
+                }
             },
-            // 事件 2：收到網路訊息時 (大升級)
+
+            // ==========================================
+            // 事件 2：收到網路訊息時
+            // ==========================================
             async (rawMsg: Uint8Array) => {
                 const type = rawMsg[0];
                 const payload = rawMsg.slice(1);
@@ -111,7 +141,7 @@ export class YoinClient {
                     const mySV = this.doc.get_state_vector();
                     this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1_REPLY, mySV));
 
-                    // 關鍵修復：主動向新朋友自我介紹 (發送自己的 Awareness 狀態)
+                    // 主動向新朋友自我介紹 (發送自己的 Awareness 狀態)
                     const myState = this.awarenessStates.get(this.myClientId);
                     if (myState) {
                         this.setAwarenessState(myState);
@@ -126,16 +156,16 @@ export class YoinClient {
                     const myState = this.awarenessStates.get(this.myClientId);
                     if (myState) {
                         this.setAwarenessState(myState);
-                    };
+                    }
 
                 } else if (type === MSG_SYNC_STEP_2) {
                     // 【收到實質的更新資料】
                     this.doc.apply_update(payload);
                     this.notifyListeners();
                     this.scheduleSave();
-                // 攔截感知系統的封包
+
                 } else if (type === MSG_AWARENESS) {
-                    // 將二進制 Payload 轉回 JSON 字串
+                    // 【攔截感知系統的封包】
                     const jsonStr = new TextDecoder().decode(payload);
                     try {
                         const state = JSON.parse(jsonStr);
@@ -153,10 +183,18 @@ export class YoinClient {
                         console.error("解析 Awareness 失敗", e);
                     }
                 }
+            },
+
+            // ==========================================
+            // 事件 3：網路狀態改變時 (補上剛剛缺少的參數)
+            // ==========================================
+            (status) => {
+                this.notifyNetworkListeners(status);
             }
         );
 
         this.loadFromDisk();
+        
         // 心跳機制：每 15 秒重新廣播一次自己的狀態 (告訴大家我還活著)
         setInterval(() => {
             const myState = this.awarenessStates.get(this.myClientId);
@@ -183,6 +221,14 @@ export class YoinClient {
                 this.notifyAwarenessListeners();
             }
         }, 5000);
+    }
+    // 🟢 開放給外部 UI 訂閱的方法
+    public subscribeNetwork(callback: (status: NetworkStatus) => void) {
+        this.networkListeners.push(callback);
+    }
+
+    private notifyNetworkListeners(status: NetworkStatus) {
+        this.networkListeners.forEach(listener => listener(status));
     }
     /**
      * 核心方法：插入文字

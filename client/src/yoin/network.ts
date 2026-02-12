@@ -1,45 +1,44 @@
 // client/src/network.ts
+import type { NetworkStatus } from './types';
 
-/**
- * 定義回呼函數的型別：
- * 接收一個 Uint8Array (二進制資料)，回傳 void (或是 Promise<void>)
- */
+// 接收一個 Uint8Array (二進制資料)，回傳 void (或是 Promise<void>)
 type MessageCallback = (data: Uint8Array) => void | Promise<void>;
 type ConnectCallback = () => void; //  新增連線成功的回呼型別
+type StatusCallback = (status: NetworkStatus) => void;
 
 export class NetworkProvider {
     private url: string;
     private socket: WebSocket | null = null;
     private onMessageReceived: MessageCallback;
-    private onConnect: ConnectCallback; //  新增連線成功的回呼函數
-    //  新增：離線佇列，用來存放斷線時產生的 updates
+    private onConnect: ConnectCallback;             //  新增連線成功的回呼函數
+    private onStatusChange: StatusCallback;         //  新增網路狀態變更的回呼函數
     private messageQueue: Uint8Array[] = [];
 
-    // 🔴 這裡的參數多了一個 onConnect
-    constructor(url: string, onConnect: ConnectCallback, onMessageReceived: MessageCallback) {
+    constructor(
+        url: string, 
+        onConnect: ConnectCallback, 
+        onMessageReceived: MessageCallback,
+        onStatusChange: StatusCallback          // 接收狀態回呼
+    ) {
         this.url = url;
         this.onConnect = onConnect;
         this.onMessageReceived = onMessageReceived;
+        this.onStatusChange = onStatusChange;
         this.connect();
     }
 
     private connect(): void {
+        this.onStatusChange('connecting');
         this.socket = new WebSocket(this.url);
         this.socket.binaryType = 'arraybuffer'; 
 
         this.socket.onopen = () => {
-            console.log(" [Network] Connected to Sync Server");
+            console.log("[Network] Connected to Sync Server");
+            this.onStatusChange('online'); 
             
-            //  1. 觸發初始同步 (告訴 YoinClient 可以發送 State Vector 了)
             this.onConnect();
-
-            //  新增：連線成功時，把積壓在佇列裡的更新全部發送出去
             if (this.messageQueue.length > 0) {
-                console.log(`🚀 [Network] Flushing ${this.messageQueue.length} queued updates...`);
-                this.messageQueue.forEach(update => {
-                    this.socket?.send(update);
-                });
-                // 清空佇列
+                this.messageQueue.forEach(update => this.socket?.send(update));
                 this.messageQueue = [];
             }
         };
@@ -51,13 +50,15 @@ export class NetworkProvider {
         };
 
         this.socket.onclose = () => {
-            console.log("🔴 [Network] Disconnected. Retrying in 3s...");
-            this.socket = null; // 清空參照
+            console.warn("[Network] Disconnected");
+            this.onStatusChange('offline'); 
+            
+            // 簡單的斷線重連機制 (3秒後重試)
             setTimeout(() => this.connect(), 3000);
         };
 
-        this.socket.onerror = (error) => {
-            console.error("❌ [Network] WebSocket Error:", error);
+        this.socket.onerror = () => {
+            this.onStatusChange('offline'); 
         };
     }
 
