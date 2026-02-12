@@ -1,6 +1,5 @@
 // client/src/main.ts
 import { initYoin, YoinClient, initPanicHook } from './yoin'; // 記得引入 initPanicHookimport './style.css';
-
 // 簡單的 Log 工具
 function log(msg: string) {
     const container = document.getElementById('log-container');
