@@ -1,228 +1,301 @@
-import { YoinDoc } from '../../../core/pkg-web/core';                           // 引入 WASM 定義
-import { StorageAdapter } from './storage';                                 // 引入我們剛改好的 Storage
-import { NetworkProvider } from './network';                                // 引入我們剛改好的 Network
-import type { YoinConfig, AwarenessState, NetworkStatus } from "./types";   // 引入設定檔介面TYPE
+import { YoinDoc } from '../../../core/pkg-web/core';
+import { StorageAdapter } from './storage';
+import { NetworkProvider } from './network';
+import type { YoinConfig, AwarenessState, AwarenessPartial, AwarenessCallback, NetworkStatus } from "./types";
 
-// 1. 定義通訊協議的 Message Type 常數
-const MSG_SYNC_STEP_1 = 0;        // Type 0 傳送 State Vector
-const MSG_SYNC_STEP_2 = 1;        // Type 1 傳送 Diff 或 Update
-const MSG_SYNC_STEP_1_REPLY = 2;  // Type 2 新增：「收到，順便附上我的進度，你也把你多出來的資料給我」
-const MSG_AWARENESS = 3;          // Type 3 新增：感知系統廣播
+// ============================================================
+// 通訊協議常數
+// ============================================================
+const MSG_SYNC_STEP_1 = 0;
+const MSG_SYNC_STEP_2 = 1;
+const MSG_SYNC_STEP_1_REPLY = 2;
+const MSG_AWARENESS = 3;
 
+// ============================================================
+// Layer 3: Logic Core — Awareness 狀態管理 + CRDT 同步引擎
+// ============================================================
 export class YoinClient {
     private doc: YoinDoc;
     private storage: StorageAdapter;
     private network: NetworkProvider;
     private config: YoinConfig;
 
-    // 用來存放訂閱者 (UI 更新函數) 的陣列
+    // CRDT 文字訂閱者
     private listeners: ((text: string) => void)[] = [];
-
-    // 新增：用來記錄計時器的 ID
     private saveTimeout: number | undefined;
 
-    // 感知系統的專屬屬性
-    private myClientId = Math.random().toString(36).substring(2, 10); // 隨機產生一個唯一 ID
-    private awarenessStates: Map<string, AwarenessState> = new Map(); // 存放所有在線使用者的狀態
-    private awarenessListeners: ((states: Map<string, AwarenessState>) => void)[] = []; // 感知系統的 UI 訂閱者
+    // ==========================================
+    // Awareness 系統屬性
+    // ==========================================
+    private myClientId = Math.random().toString(36).substring(2, 10);
+    private awarenessStates: Map<string, AwarenessState> = new Map();
+    private awarenessListeners: AwarenessCallback[] = [];
 
-    // 新增一個計時器，用來做廣播的防抖 (Throttling)
+    // Throttle 機制 (網路廣播防抖)
     private awarenessTimeout: number | undefined;
     private pendingAwarenessUpdate: boolean = false;
 
+    // Heartbeat 計時器
+    private heartbeatTimer: number | undefined;
+    private gcTimer: number | undefined;
+
     private networkListeners: ((status: NetworkStatus) => void)[] = [];
-    
-    public setAwarenessState(state: Record<string, any>) {
-        const fullState: AwarenessState = { 
-            ...state, 
-            clientId: this.myClientId, 
-            timestamp: Date.now() 
+
+    // ==========================================
+    // Awareness Public API
+    // ==========================================
+
+    /**
+     * 設定本地 Awareness 狀態 (支援部分更新)
+     * 系統自動填入 clientId / timestamp，外部只需傳入變動的欄位
+     *
+     * @example
+     * client.setAwareness({ cursorX: e.clientX, cursorY: e.clientY });
+     * client.setAwareness({ selection: 'shape-123' });
+     */
+    public setAwareness(partial: AwarenessPartial) {
+        const current = this.awarenessStates.get(this.myClientId);
+        const fullState: AwarenessState = {
+            // 保留上次的欄位 (name, color 等)
+            ...current,
+            // 覆寫本次變更
+            ...partial,
+            // 系統欄位永遠由引擎控制
+            clientId: this.myClientId,
+            timestamp: Date.now(),
         } as AwarenessState;
-        
-        // 1. 本地 UI 狀態
+
+        // 1. 立即更新本地 UI 狀態
         this.awarenessStates.set(this.myClientId, fullState);
         this.notifyAwarenessListeners();
 
-        // 2. 真正的「節流 (Throttle)」機制
-        // 開發者沒設定的話，預設使用 30ms (大約 33 FPS，游標會極度滑順)
-        const throttleMs = this.config.awarenessThrottleMs ?? 30; 
+        // 2. Throttle 網路廣播
+        const throttleMs = this.config.awarenessThrottleMs ?? 30;
 
         if (!this.awarenessTimeout) {
-            // 如果目前「沒有」在冷卻中，立刻發送網路廣播！
+            // 冷卻期外 → 立即發送
             this.broadcastAwareness(fullState);
-
-            // 接著進入冷卻期
             this.awarenessTimeout = window.setTimeout(() => {
-                this.awarenessTimeout = undefined; // 解除冷卻
-                
-                // 檢查冷卻期間，滑鼠是不是有繼續移動？有的話，補發最後的最新狀態
+                this.awarenessTimeout = undefined;
+                // 冷卻結束 → 補發最後一筆
                 if (this.pendingAwarenessUpdate) {
                     this.pendingAwarenessUpdate = false;
-                    const latestState = this.awarenessStates.get(this.myClientId);
-                    if (latestState) this.broadcastAwareness(latestState);
+                    const latest = this.awarenessStates.get(this.myClientId);
+                    if (latest) this.broadcastAwareness(latest);
                 }
             }, throttleMs);
         } else {
-            // 如果還在冷卻中，不急著發送，只標記「有新動態」
+            // 冷卻中 → 標記有待發更新
             this.pendingAwarenessUpdate = true;
         }
     }
 
-    // 抽離出來的輔助方法，讓程式碼更簡潔
+    /**
+     * 訂閱 Awareness 狀態變化
+     * @returns 取消訂閱的函式
+     */
+    public onAwarenessChange(callback: AwarenessCallback): () => void {
+        this.awarenessListeners.push(callback);
+        // 訂閱當下立刻觸發一次
+        callback(this.awarenessStates);
+        // 回傳取消訂閱函式
+        return () => {
+            const idx = this.awarenessListeners.indexOf(callback);
+            if (idx !== -1) this.awarenessListeners.splice(idx, 1);
+        };
+    }
+
+    /**
+     * 主動廣播離線通知並清除本地狀態
+     * 應在 window.beforeunload 中呼叫
+     */
+    public leaveAwareness() {
+        const offlineState: AwarenessState = {
+            clientId: this.myClientId,
+            offline: true,
+            name: '',
+            color: '',
+            timestamp: Date.now(),
+        };
+
+        this.awarenessStates.delete(this.myClientId);
+        this.notifyAwarenessListeners();
+
+        // 發送離線封包 (跳過 throttle，立即送出)
+        this.broadcastAwareness(offlineState);
+    }
+
+    /**
+     * 強制觸發 Awareness 重繪 (例如切換渲染器後)
+     */
+    public notifyAwarenessListeners() {
+        const snapshot = this.awarenessStates;
+        this.awarenessListeners.forEach(fn => fn(snapshot));
+    }
+
+    // ==========================================
+    // 向下相容別名 (Deprecated → 下個版本移除)
+    // ==========================================
+    /** @deprecated 請改用 setAwareness() */
+    public setAwarenessState(state: Record<string, any>) {
+        this.setAwareness(state as AwarenessPartial);
+    }
+    /** @deprecated 請改用 onAwarenessChange() */
+    public subscribeAwareness(callback: AwarenessCallback) {
+        this.onAwarenessChange(callback);
+    }
+
+    // ==========================================
+    // Awareness 內部實作
+    // ==========================================
+
     private broadcastAwareness(state: AwarenessState) {
         const jsonStr = JSON.stringify(state);
         const payload = new TextEncoder().encode(jsonStr);
         this.network.broadcast(this.encodeMessage(MSG_AWARENESS, payload));
     }
 
-    public subscribeAwareness(callback: (states: Map<string, AwarenessState>) => void) {
-        this.awarenessListeners.push(callback);
-        callback(this.awarenessStates);
+    /**
+     * 啟動 Heartbeat 機制
+     * - 定期廣播自己的狀態 (keep-alive)
+     * - 定期垃圾回收超時的幽靈使用者
+     */
+    private startHeartbeat() {
+        const heartbeatInterval = this.config.heartbeatIntervalMs ?? 5000;
+        const timeoutThreshold = this.config.heartbeatTimeoutMs ?? 30000;
+
+        // Heartbeat 廣播：定期重發自己的狀態
+        this.heartbeatTimer = window.setInterval(() => {
+            const myState = this.awarenessStates.get(this.myClientId);
+            if (myState) {
+                this.setAwareness({}); // 空更新 → 只刷新 timestamp
+            }
+        }, heartbeatInterval);
+
+        // GC：每 3 秒掃描，清除超過閾值未更新的使用者
+        this.gcTimer = window.setInterval(() => {
+            const now = Date.now();
+            let changed = false;
+
+            for (const [clientId, state] of this.awarenessStates.entries()) {
+                if (clientId === this.myClientId) continue; // 不清自己
+                if (now - state.timestamp > timeoutThreshold) {
+                    this.awarenessStates.delete(clientId);
+                    changed = true;
+                    console.log(`[Awareness] 👻 已清除離線用戶: ${state.name} (${clientId})`);
+                }
+            }
+
+            if (changed) this.notifyAwarenessListeners();
+        }, 3000);
     }
 
-    public notifyAwarenessListeners() {
-        this.awarenessListeners.forEach(listener => listener(this.awarenessStates));
+    /**
+     * 銷毀 Client：停止所有計時器並廣播離線
+     */
+    public destroy() {
+        if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+        if (this.gcTimer) clearInterval(this.gcTimer);
+        if (this.awarenessTimeout) clearTimeout(this.awarenessTimeout);
+        if (this.saveTimeout) clearTimeout(this.saveTimeout);
+        this.leaveAwareness();
     }
-    // 主動廣播下線通知
-    public leaveAwareness() {
-        // 建立一個只有 clientId 和 offline 標記的狀態包
-        const offlineState: AwarenessState = { clientId: this.myClientId, offline: true, name: '', color: '', timestamp: Date.now() };
-        
-        // 先把自己從本地移除
-        this.awarenessStates.delete(this.myClientId);
-        this.notifyAwarenessListeners();
 
-        // 廣播給所有人「我走了」
-        const jsonStr = JSON.stringify(offlineState);
-        const payload = new TextEncoder().encode(jsonStr);
-        this.network.broadcast(this.encodeMessage(MSG_AWARENESS, payload));
-    }
+    // ==========================================
+    // Constructor
+    // ==========================================
     constructor(config: YoinConfig) {
         this.config = config;
         this.myClientId = Math.random().toString(36).substring(2, 10);
         this.doc = new YoinDoc();
         this.storage = new StorageAdapter(config.dbName);
 
-        // 🟢 將 docId 轉化為 URL 參數，實現房間隔離
-        // 如果原本是 ws://localhost:8080，會變成 ws://localhost:8080/?room=demo-doc-v1
+        // 將 docId 轉化為房間 URL
         const roomUrl = new URL(config.url);
         roomUrl.searchParams.append('room', config.docId);
 
         this.network = new NetworkProvider(
             roomUrl.toString(),
 
-            // ==========================================
-            // 事件 1：剛連上線時
-            // ==========================================
+            // 事件 1：連線成功
             () => {
                 const sv = this.doc.get_state_vector();
                 this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1, sv));
                 console.log("🔄 [Sync] Sent initial State Vector");
 
-                // 連線時，順便廣播一次自己的最新狀態給所有人
+                // 連線時廣播自己的最新狀態
                 const myState = this.awarenessStates.get(this.myClientId);
-                if (myState) {
-                    this.setAwarenessState(myState);
-                }
+                if (myState) this.setAwareness({});
             },
 
-            // ==========================================
-            // 事件 2：收到網路訊息時
-            // ==========================================
+            // 事件 2：收到網路訊息
             async (rawMsg: Uint8Array) => {
                 const type = rawMsg[0];
                 const payload = rawMsg.slice(1);
 
-                if (type === MSG_SYNC_STEP_1) {
-                    // 【收到新朋友的連線請求】
-                    const diff = this.doc.export_diff(payload);
-                    this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_2, diff));
-                    
-                    const mySV = this.doc.get_state_vector();
-                    this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1_REPLY, mySV));
-
-                    // 主動向新朋友自我介紹 (發送自己的 Awareness 狀態)
-                    const myState = this.awarenessStates.get(this.myClientId);
-                    if (myState) {
-                        this.setAwarenessState(myState);
+                switch (type) {
+                    case MSG_SYNC_STEP_1: {
+                        const diff = this.doc.export_diff(payload);
+                        this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_2, diff));
+                        const mySV = this.doc.get_state_vector();
+                        this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1_REPLY, mySV));
+                        // 向新朋友自我介紹
+                        const myState = this.awarenessStates.get(this.myClientId);
+                        if (myState) this.setAwareness({});
+                        break;
                     }
 
-                } else if (type === MSG_SYNC_STEP_1_REPLY) {
-                    // 【收到舊朋友回傳的進度要求】
-                    const diff = this.doc.export_diff(payload);
-                    this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_2, diff));
-
-                    // 雙重保險：新朋友收到舊朋友的回應時，也再次確保自己有廣播狀態
-                    const myState = this.awarenessStates.get(this.myClientId);
-                    if (myState) {
-                        this.setAwarenessState(myState);
+                    case MSG_SYNC_STEP_1_REPLY: {
+                        const diff = this.doc.export_diff(payload);
+                        this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_2, diff));
+                        const myState = this.awarenessStates.get(this.myClientId);
+                        if (myState) this.setAwareness({});
+                        break;
                     }
 
-                } else if (type === MSG_SYNC_STEP_2) {
-                    // 【收到實質的更新資料】
-                    this.doc.apply_update(payload);
-                    this.notifyListeners();
-                    this.scheduleSave();
+                    case MSG_SYNC_STEP_2: {
+                        this.doc.apply_update(payload);
+                        this.notifyListeners();
+                        this.scheduleSave();
+                        break;
+                    }
 
-                } else if (type === MSG_AWARENESS) {
-                    // 【攔截感知系統的封包】
-                    const jsonStr = new TextDecoder().decode(payload);
-                    try {
-                        const state = JSON.parse(jsonStr);
-                        
-                        // 判斷是否為「下線通知」
-                        if (state.offline) {
-                            this.awarenessStates.delete(state.clientId);
-                        } else {
-                            // 存入對方的狀態並更新 UI
-                            this.awarenessStates.set(state.clientId, state);
+                    case MSG_AWARENESS: {
+                        const jsonStr = new TextDecoder().decode(payload);
+                        try {
+                            const state: AwarenessState = JSON.parse(jsonStr);
+                            if (state.offline) {
+                                this.awarenessStates.delete(state.clientId);
+                            } else {
+                                this.awarenessStates.set(state.clientId, state);
+                            }
+                            this.notifyAwarenessListeners();
+                        } catch (e) {
+                            console.error("[Awareness] 解析封包失敗", e);
                         }
-                        
-                        this.notifyAwarenessListeners();
-                    } catch (e) {
-                        console.error("解析 Awareness 失敗", e);
+                        break;
                     }
                 }
             },
 
-            // ==========================================
-            // 事件 3：網路狀態改變時 (補上剛剛缺少的參數)
-            // ==========================================
+            // 事件 3：網路狀態變更
             (status) => {
                 this.notifyNetworkListeners(status);
             }
         );
 
         this.loadFromDisk();
-        
-        // 心跳機制：每 15 秒重新廣播一次自己的狀態 (告訴大家我還活著)
-        setInterval(() => {
-            const myState = this.awarenessStates.get(this.myClientId);
-            if (myState) {
-                this.setAwarenessState(myState); // 這會更新 timestamp 並發送廣播
-            }
-        }, 15000);
-
-        // 垃圾回收 (Garbage Collection)：每 5 秒檢查一次有沒有幽靈
-        setInterval(() => {
-            const now = Date.now();
-            let hasGhost = false;
-            
-            for (const [clientId, state] of this.awarenessStates.entries()) {
-                // 如果超過 30 秒沒有收到這個人的更新，就認定他網路斷線或當機了
-                if (now - state.timestamp > 30000) {
-                    this.awarenessStates.delete(clientId);
-                    hasGhost = true;
-                }
-            }
-            
-            // 如果有清掉幽靈，就通知 UI 更新畫面
-            if (hasGhost) {
-                this.notifyAwarenessListeners();
-            }
-        }, 5000);
+        this.startHeartbeat();
     }
-    // 🟢 開放給外部 UI 訂閱的方法
+
+    /** 取得本地 clientId */
+    public getClientId(): string {
+        return this.myClientId;
+    }
+
+    // ==========================================
+    // Network 訂閱
+    // ==========================================
     public subscribeNetwork(callback: (status: NetworkStatus) => void) {
         this.networkListeners.push(callback);
     }

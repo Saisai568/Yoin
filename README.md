@@ -15,16 +15,23 @@
 * **Awareness & Presence**: Real-time monitoring of active users with automated cleanup and status broadcasting.
 * **TypeScript SDK**: Fully typed client SDK for a developer-friendly experience.
 
-## 🏗 Architecture
+## 🏗 Architecture & Protocol
 
-The system consists of three main layers:
+**Yoin** implements a robust synchronization protocol designed for resilience and consistency:
 
-1.  **Core (Rust + WASM)**: Handles CRDT operations, state vectors, and delta calculation.
-2.  **Client SDK (TypeScript)**:
-    * **StorageAdapter**: Manages persistence to IndexedDB.
-    * **NetworkProvider**: Handles WebSocket communication and binary protocol.
-    * **YoinClient**: The main entry point orchestrating the sync loop.
-3.  **Server (Node.js)**: A lightweight WebSocket relay that broadcasts binary updates to connected peers.
+1.  **3-Way Handshake**:
+    *   **Step 1**: Client A connects and sends `MSG_SYNC_STEP_1` (State Vector).
+    *   **Step 2**: Client B receives state, calculates differential updates (Deltas), and replies with `MSG_SYNC_STEP_2` (Delta) + `MSG_SYNC_STEP_1_REPLY` (B's State Vector).
+    *   **Step 3**: Client A processes Delta and sends back missing updates for B.
+    *   *Result*: Both clients converge within milliseconds of connection.
+
+2.  **Resilience Layer**:
+    *   **Offline Queue**: Updates generated while disconnected are buffered in memory and automatically flushed upon reconnection.
+    *   **Debounced Persistence**: Local IndexedDB writes are throttled (e.g., 1000ms delay) to prevent UI blocking during high-frequency typing.
+
+3.  **Awareness System**:
+    *   **Ephemeral State**: Cursor positions and user presence are broadcast separately via `MSG_AWARENESS` (Type 3) messages.
+    *   **Heartbeat & GC**: Clients broadcast "I'm alive" every 15s. Stale clients (>30s silence) are automatically garbage collected from the peer list.
 
 ## 🚀 Getting Started
 
@@ -58,18 +65,70 @@ The system consists of three main layers:
 4.  **Open in Browser**
     Visit `http://localhost:5173`. Open multiple tabs to test real-time synchronization!
 
+## 🧪 API Usage
+
+The `YoinClient` provides a simple, strongly-typed API for collaborative features.
+
+```typescript
+// 1. Initialize Client
+const client = new YoinClient({
+    url: 'ws://localhost:8080',
+    dbName: 'MyNotesDB',
+    docId: 'room-1',
+});
+
+// 2. Collaborative Text Editing
+// Insert "Hello" at position 0
+await client.insertText(0, "Hello");
+
+// Read current content
+const text = client.getText();
+console.log(text); // "Hello"
+
+// Subscribe to text changes
+client.subscribe((newText) => {
+    updateTextArea(newText);
+});
+
+// 3. Shared State (Map)
+// Store complex objects securely (handled via Rust + serde_json)
+await client.setMap('config', 'theme', { mode: 'dark', color: '#333' });
+
+// Retrieve state
+const theme = client.getMap('config');
+
+// 4. Awareness (Cursors & Presence)
+// Broadcast my cursor position (not persisted to DB)
+client.setAwareness({
+    name: 'Alice',
+    cursor: { x: 100, y: 200 },
+    color: '#ff0000'
+});
+
+// Listen for other users
+client.subscribeAwareness((states) => {
+    states.forEach((state, clientId) => {
+        renderCursor(clientId, state.cursor);
+    });
+});
+```
+
 ## 🛠 Project Structure
 
 ```text
 .
 ├── core/           # Rust source code (CRDT logic)
 │   ├── src/lib.rs  # Main WASM bindings
-│   └── pkg/        # Generated WASM package
-├── client/         # Frontend SDK & Demo App (Vite + TS)
+│   └── pkg/        # Generated WASM package (WASM + TS bindings)
+├── client/         # Demo App & UI Logic (Vite + TS)
 │   ├── src/
-│   │   ├── YoinClient.ts  # Main Framework Class
-│   │   ├── storage.ts     # IndexedDB Adapter
-│   │   └── network.ts     # WebSocket Provider
+│   │   ├── yoin/       # Core Yoin SDK (Modularized)
+│   │   │   ├── YoinClient.ts  # Orchestrator
+│   │   │   ├── network.ts     # WS Protocol & Offline Queue
+│   │   │   ├── storage.ts     # IndexedDB Adapter
+│   │   │   └── types.ts       # Typed Interfaces
+│   │   ├── renderers.ts       # Remote Cursors & UI Renderers
+│   │   └── main.ts            # App Entry Point & UI Logic
 ├── server/         # Simple Node.js WebSocket Relay
 └── README.md
 ```

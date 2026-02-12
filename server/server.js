@@ -1,4 +1,7 @@
 // server/server.js
+// ============================================================
+// Layer 2: Transport — Blind Relay + Smart Sync Server
+// ============================================================
 const WebSocket = require('ws');
 const url = require('url');
 const { YoinDoc } = require('../core/pkg-node'); 
@@ -6,34 +9,49 @@ const { YoinDoc } = require('../core/pkg-node');
 const wss = new WebSocket.Server({ port: 8080 });
 
 // ==========================================
-// 🧠 伺服器端的「大腦」：房間管理器
+// 通訊協議常數 (需與前端一致)
 // ==========================================
-// 結構: { [roomId]: { doc: YoinDoc, updateCount: number, clients: Set<WebSocket> } }
-const rooms = new Map();
+const MSG_SYNC_STEP_1 = 0;       // Client → Server: State Vector 請求
+const MSG_SYNC_STEP_2 = 1;       // Client ↔ Server: 實質更新 (Update / Diff)
+const MSG_SYNC_STEP_1_REPLY = 2; // Server → Client: 雙向同步回應
+const MSG_AWARENESS = 3;         // Awareness: Blind Relay (不解析、不儲存)
 
-// 設定壓縮閾值：每累積 50 個小更新，就執行一次壓縮
+// ==========================================
+// 🧠 房間管理器
+// ==========================================
+const rooms = new Map();
 const COMPACTION_THRESHOLD = 50;
 
-console.log("🚀 Yoin Smart Server (with Snapshot & Compaction) 啟動於 8080");
+console.log("🚀 Yoin Smart Server (v2.0 with Blind Relay Awareness) 啟動於 8080");
 
 function getRoom(roomId) {
     if (!rooms.has(roomId)) {
         console.log(`[Server] 初始化新房間: ${roomId}`);
         rooms.set(roomId, {
-            doc: new YoinDoc(), // Rust WASM 物件
+            doc: new YoinDoc(),
             updateCount: 0,
             clients: new Set()
         });
-        // TODO: 如果有做資料庫，這裡應該要 loadFromDB(roomId) 並 doc.apply_update(data)
     }
     return rooms.get(roomId);
+}
+
+/**
+ * 廣播工具：將原始訊息轉發給房間內除了發送者以外的所有人
+ * 用於 Awareness Blind Relay 及 CRDT 更新轉發
+ */
+function broadcastToOthers(room, sender, data) {
+    room.clients.forEach(client => {
+        if (client !== sender && client.readyState === WebSocket.OPEN) {
+            client.send(data);
+        }
+    });
 }
 
 wss.on('connection', function connection(ws, req) {
     const parsedUrl = url.parse(req.url, true);
     const roomId = parsedUrl.query.room || 'default';
     
-    // 1. 加入房間
     const room = getRoom(roomId);
     room.clients.add(ws);
     ws.roomId = roomId;
@@ -44,62 +62,49 @@ wss.on('connection', function connection(ws, req) {
     // 🔄 協議處理 (Binary Protocol)
     // ==========================================
     ws.on('message', function incoming(message) {
-        // 確保訊息是 Uint8Array
         const data = new Uint8Array(message);
+        if (data.length === 0) return;
+
         const type = data[0];
         const payload = data.slice(1);
 
-        // 定義協議常數 (需與前端一致)
-        const MSG_SYNC_STEP_1 = 0;       // Client -> Server: 這是我的 SV，請給我 Diff
-        const MSG_SYNC_STEP_2 = 1;       // Client -> Server: 這是我的更新 (Update)
-        const MSG_SYNC_STEP_1_REPLY = 2; // (通常 Server 用不到這個，因為 Server 是權威)
-        const MSG_AWARENESS = 3;
-
-        if (type === MSG_SYNC_STEP_1) {
-            // 【場景 A：新用戶連線，請求同步】
-            console.log(`[Sync] 用戶請求同步 ${roomId}`);
-            
-            // 🟢 Smart Server: 計算「客戶端缺少的 Diff」
-            // 這裡不再需要廣播給別人，而是直接回傳給這個新用戶
-            const missingUpdate = room.doc.get_missing_updates(payload);
-            
-            // 回傳 MSG_SYNC_STEP_2 (Update) 給該用戶
-            const response = new Uint8Array(missingUpdate.length + 1);
-            response[0] = MSG_SYNC_STEP_2;
-            response.set(missingUpdate, 1);
-            ws.send(response);
-
-        } else if (type === MSG_SYNC_STEP_2) {
-            // 【場景 B：用戶發送更新】
-            
-            // 1. 🟢 寫入伺服器記憶體 (保持伺服器數據最新)
-            try {
-                room.doc.apply_update(payload);
-                room.updateCount++;
-            } catch (e) {
-                console.error("Rust Apply Error:", e);
-                return; // 壞掉的更新不廣播
+        switch (type) {
+            case MSG_SYNC_STEP_1: {
+                // 【新用戶連線：計算並回傳缺少的 Diff】
+                console.log(`[Sync] 用戶請求同步 ${roomId}`);
+                const missingUpdate = room.doc.get_missing_updates(payload);
+                const response = new Uint8Array(missingUpdate.length + 1);
+                response[0] = MSG_SYNC_STEP_2;
+                response.set(missingUpdate, 1);
+                ws.send(response);
+                break;
             }
 
-            // 2. 廣播給房間內「其他人」
-            room.clients.forEach(client => {
-                if (client !== ws && client.readyState === WebSocket.OPEN) {
-                    client.send(data);
+            case MSG_SYNC_STEP_2: {
+                // 【CRDT 更新：寫入 + 廣播 + 壓縮】
+                try {
+                    room.doc.apply_update(payload);
+                    room.updateCount++;
+                } catch (e) {
+                    console.error("Rust Apply Error:", e);
+                    return;
                 }
-            });
+                broadcastToOthers(room, ws, data);
 
-            // 3. 🟢 觸發快照壓縮 (Compaction)
-            if (room.updateCount >= COMPACTION_THRESHOLD) {
-                performCompaction(roomId, room);
+                if (room.updateCount >= COMPACTION_THRESHOLD) {
+                    performCompaction(roomId, room);
+                }
+                break;
             }
 
-        } else if (type === MSG_AWARENESS) {
-            // 感知訊息不進資料庫，直接轉發
-            room.clients.forEach(client => {
-                if (client !== ws && client.readyState === WebSocket.OPEN) {
-                    client.send(data);
-                }
-            });
+            case MSG_AWARENESS: {
+                // 【🎯 Blind Relay：不解析、不儲存、直接轉發】
+                broadcastToOthers(room, ws, data);
+                break;
+            }
+
+            default:
+                console.warn(`[Server] 未知訊息類型: ${type}`);
         }
     });
 
@@ -108,8 +113,6 @@ wss.on('connection', function connection(ws, req) {
         if (room) {
             room.clients.delete(ws);
             if (room.clients.size === 0) {
-                // 可選擇：沒人時是否要釋放記憶體？
-                // rooms.delete(ws.roomId); 
                 console.log(`[Server] 房間 ${ws.roomId} 已空，快照暫存於記憶體`);
             }
         }
@@ -121,16 +124,8 @@ wss.on('connection', function connection(ws, req) {
 // ==========================================
 function performCompaction(roomId, room) {
     console.time(`Compaction-${roomId}`);
-    
-    // 1. 從 Rust 取得極小的 Snapshot (已合併歷史)
     const snapshot = room.doc.snapshot();
-    
-    // 2. (模擬) 寫入硬碟/資料庫
-    // fs.writeFileSync(`./db/${roomId}.yoin`, snapshot);
     console.log(`[Compaction] 房間 ${roomId} 執行壓縮。大小: ${snapshot.length} bytes`);
-
-    // 3. 重置計數器
     room.updateCount = 0;
-    
     console.timeEnd(`Compaction-${roomId}`);
 }
