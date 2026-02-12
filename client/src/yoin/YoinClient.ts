@@ -1,4 +1,4 @@
-import { YoinDoc } from '../../../core/pkg/core';                           // 引入 WASM 定義
+import { YoinDoc } from '../../../core/pkg-web/core';                           // 引入 WASM 定義
 import { StorageAdapter } from './storage';                                 // 引入我們剛改好的 Storage
 import { NetworkProvider } from './network';                                // 引入我們剛改好的 Network
 import type { YoinConfig, AwarenessState, NetworkStatus } from "./types";   // 引入設定檔介面TYPE
@@ -420,6 +420,62 @@ export class YoinClient {
         } catch (error) {
             console.warn(`[Yoin] 讀取 Array 項目 (${arrayName}[${index}]) 失敗:`, error);
             return undefined;
+        }
+    }
+
+    // ==========================================
+    // 🌳 提案 C：巢狀 Map API
+    // ==========================================
+    
+    /**
+     * 深度修改 Map 數值 (支援白板協作)
+     * @param mapName 根 Map 名稱 (例如 "whiteboard")
+     * @param path 路徑陣列 (例如 ["shape-id-123", "style", "color"])
+     * @param value 值
+     */
+    public setMapDeep(mapName: string, path: string[], value: string | number | boolean) {
+        try {
+            this.doc.map_set_deep(mapName, path, value);
+            
+            // 觸發更新
+            const update = this.doc.export_update(); // 這裡可以優化，但先求有
+            // 注意：Rust 內部的 transaction 已經處理好 update 了
+            // 我們只需要觸發儲存和通知
+            
+            // 由於 map_set_deep 會產生 update，我們需要抓出 diff 廣播嗎？
+            // 其實 Yrs 的 observe 機制會處理，但我們目前的架構是手動廣播。
+            // 為了簡化，我們先廣播一次「全量 diff」給別人 (或是像 deleteText 那樣做)
+            // *最佳實踐*：Rust 端應該回傳 update binary，這裡先暫用通用廣播
+            
+            const diff = this.doc.snapshot(); // 暫時用 snapshot 確保同步，或是用 get_update
+            // 實際上 deleteText 那邊我們是用 delete_text_and_get_update
+            // 建議 Rust 端 map_set_deep 也回傳 Vec<u8> update，這裡先簡化流程：
+            
+            this.notifyListeners();
+            this.scheduleSave();
+            
+            // 這裡依然需要廣播，建議回頭去 Rust 把 map_set_deep 改成回傳 Vec<u8>
+            // 但為了不讓你改太多 Rust，我們先用這招：
+            const sv = this.doc.get_state_vector();
+            this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1_REPLY, sv)); 
+            // ^ 偷懶解法：告訴別人「我更新了，你們來跟我同步吧」
+            
+        } catch (e) {
+            console.error("[Yoin] Deep Set Error:", e);
+        }
+    }
+
+    /**
+     * 取得完整的 Map 資料 (包含巢狀結構)
+     * @param mapName Map 名稱 (例如 "shapes")
+     */
+    public getMapJSON(mapName: string): any {
+        try {
+            // 呼叫新的 Rust API
+            return this.doc.map_get_json(mapName);
+        } catch (e) {
+            console.error("[Yoin] Get JSON Error:", e);
+            return null;
         }
     }
 }

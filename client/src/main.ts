@@ -1,6 +1,5 @@
 // client/src/main.ts
-import { initYoin, YoinClient } from './yoin';
-import './style.css';
+import { initYoin, YoinClient, initPanicHook } from './yoin'; // 記得引入 initPanicHookimport './style.css';
 
 // 簡單的 Log 工具
 function log(msg: string) {
@@ -87,6 +86,8 @@ async function bootstrap() {
     log("🚀 正在啟動 WASM...");
     await initYoin();
     log("✅ WASM 載入完成");
+    initPanicHook(); // 🟢 啟動錯誤攔截器，以後 Rust 報錯就會顯示詳細原因！
+    log("✅ WASM Panic Hook 已啟動");
 
     const urlParams = new URLSearchParams(window.location.search);
     const currentRoom = urlParams.get('room') || 'default-room'; // 找不到就預設為 default-room
@@ -97,6 +98,10 @@ async function bootstrap() {
         docId: currentRoom, // 這個 docId 會被 YoinClient 用來生成房間專屬的 WebSocket URL
         awarenessThrottleMs: 30 // 可選：設定 Awareness 更新的節流時間 (預設 30ms);
     });
+    
+    (window as any).client = client; 
+    
+    console.log("✅ Yoin Client 已掛載到 window.client");
 
     // 順便把網頁左上角顯示的 ID 改成動態的，才不會眼花
     const docIdEl = document.getElementById('doc-id');
@@ -329,6 +334,41 @@ async function bootstrap() {
     //  當網頁準備重新整理、關閉、或跳轉時觸發
     window.addEventListener('beforeunload', () => {
         client.leaveAwareness();
+    });
+
+    // 模擬白板上的兩個物件
+
+    const shapes = ['Rect-A', 'Circle-B'];
+    const board = document.getElementById('whiteboard-demo'); // 假設你有個 div
+
+    // 監聽點擊，更新 Awareness 的 selection
+    document.querySelectorAll('.shape').forEach(el => {
+        el.addEventListener('click', (e) => {
+            const shapeId = (e.target as HTMLElement).id;
+
+            // 🟢 廣播：我選取了這個物件！
+            client.setAwarenessState({
+                name: myName,
+                color: myColor,
+                selection: shapeId
+            });
+        });
+    });
+
+    // 在 render awareness 的地方 (subscribeAwareness)
+    // 加上：如果對方選取了某個物件，給那個物件加個邊框
+    client.subscribeAwareness((states) => {
+        // ... (游標邏輯不變) ...
+
+        states.forEach(state => {
+            if (state.selection) {
+                const el = document.getElementById(state.selection);
+                if (el) {
+                    el.style.border = `2px solid ${state.color}`;
+                    // 可以加個小標籤顯示 "User A is editing..."
+                }
+            }
+        });
     });
 }
 

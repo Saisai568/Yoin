@@ -1,9 +1,9 @@
 // client/src/yoin/index.ts
-import initWasm from '../../../core/pkg/core'; 
+import initWasm, { YoinDoc, init_panic_hook } from '../../../core/pkg-web/core'; 
 
-// 2. 換個友善的名字匯出，隱藏 WASM 的實作細節
 export const initYoin = initWasm;
+export const initPanicHook = init_panic_hook; 
 
-// 3. 匯出其他核心類別與型別
 export { YoinClient } from './YoinClient';
 export type { YoinConfig, AwarenessState } from './types';
+export { YoinDoc };
