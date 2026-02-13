@@ -4,6 +4,7 @@ import { createDefaultCursor, createEmojiCursor, createAvatar } from './renderer
 import type { CursorRenderer, AwarenessState } from './yoin/types';
 import './style.css';
 import { z } from 'zod';
+import { createMapProxy, createArrayProxy } from './yoin/proxy';
 
 // ==========================================
 // Tool function log: output to the page and console at the same time
@@ -387,6 +388,81 @@ async function bootstrap() {
         }
     });
 
+    // ==========================================
+    // 🔮 Test Case 4: Proxy Transparency
+    // ==========================================
+    
+    // 定義我們預期的設定型別 (搭配 TypeScript 會有很好的自動補全)
+    type AppSettings = {
+        themeColor: string;
+        lastUpdatedBy?: string;
+        ui?: {
+            sidebar?: {
+                width: number;
+                collapsed: boolean;
+            }
+        }
+    };
+
+    // 1. 建立 Proxy 實例
+    // 這行程式碼建立了 'app-settings' Map 的代理物件
+    const settingsStore = createMapProxy<AppSettings>(client, 'app-settings');
+    // 2. 綁定一個新按鈕來測試 Proxy
+    // 請在 HTML 加入 <button id="btn-proxy-test">🔮 Test Proxy</button>
+    const btnProxyTest = document.getElementById('btn-proxy-test');
+    
+    if (btnProxyTest) {
+        btnProxyTest.onclick = () => {
+            console.log("🔮 [Proxy Test] Executing transparent updates...");
+            
+            // A. 測試根屬性寫入 (自動轉為 setMap)
+            // 應該會觸發 Zod 驗證 (因為底層還是呼叫 setMap)
+            settingsStore.themeColor = '#fd79a8'; 
+            settingsStore.lastUpdatedBy = 'Proxy_User';
+
+            // B. 測試深層巢狀寫入 (自動轉為 setMapDeep)
+            // 注意：我們不需要先建立 ui 物件，直接寫入即可！
+            // 這會轉為 map_set_deep('app-settings', ['ui', 'sidebar', 'width'], 350)
+            if (settingsStore.ui && settingsStore.ui.sidebar) {
+                settingsStore.ui.sidebar.width = Math.floor(Math.random() * 500);
+                settingsStore.ui.sidebar.collapsed = false;
+            }
+            // 這裡為了方便 TS 檢查，實際上你可以直接寫:
+            // (settingsStore as any).ui.sidebar.width = 350;
+        };
+    }
+
+    // ==========================================
+    // 🔮 Test Case 5: Array Proxy (push)
+    // ==========================================
+    
+    // 1. 建立 'action-logs' 的 Array Proxy
+    const logsStore = createArrayProxy<any>(client, 'action-logs');
+    // 2. 綁定按鈕 (重複利用 Test Proxy 按鈕，或新增一個)
+    // 為了方便，我們把測試邏輯加到剛剛的 'btn-proxy-test' 裡面
+    if (btnProxyTest) {
+        // 保存原本的 onclick
+        const prevOnClick = btnProxyTest.onclick;
+        
+        btnProxyTest.onclick = (e) => {
+            // 執行原本的 Map Proxy 測試
+            if (typeof prevOnClick === 'function') prevOnClick.call(btnProxyTest, e);
+
+            console.log("🔮 [Proxy Test] Testing Array Push...");
+            
+            // 測試 Array Push 語法糖
+            // 這應該會自動觸發 client.pushArray('action-logs', {...})
+            // 並且經過 Zod 驗證 (必須包含 action 和 time)
+            try {
+                logsStore.push({
+                    action: 'PROXY_PUSH',
+                    time: new Date().toLocaleTimeString()
+                });
+            } catch (err) {
+                console.error("Proxy Push Failed (Zod?):", err);
+            }
+        };
+    }
 }
 
 bootstrap().catch(err => {

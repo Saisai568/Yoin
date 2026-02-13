@@ -81,7 +81,7 @@ Yoin 使用 1-byte Header 來定義通訊封包類型：
 
 * [x] **Delta Update 返回值優化：** 讓所有寫入方法直接回傳 `Uint8Array` 以減少不必要的 snapshot 匯出。
 * [x] **Undo / Redo Manager：** 在 Rust 端實作事務堆疊，並暴露 `undo/redo` 接口。
-* [ ] **Schema Validation：** 整合 Zod 驗證層，防止同步非法格式數據。
+* [x] **Schema Validation：** 整合 Zod 驗證層，防止同步非法格式數據。
 
 ### 🌟 遠期目標 (Long-term Vision)
 
