@@ -3,6 +3,7 @@ import { initYoin, YoinClient, initPanicHook } from './yoin';
 import { createDefaultCursor, createEmojiCursor, createAvatar } from './renderers';
 import type { CursorRenderer, AwarenessState } from './yoin/types';
 import './style.css';
+import { z } from 'zod';
 
 // ==========================================
 // Tool function log: output to the page and console at the same time
@@ -38,6 +39,21 @@ async function bootstrap() {
         awarenessThrottleMs: 30,
         heartbeatIntervalMs: 5000,
         heartbeatTimeoutMs: 30000,
+        
+        // [新增] 資料驗證規則
+        schemas: {
+            // 規則 A: 'app-settings' Map 的 themeColor 必須是 Hex 格式 (例如 #ffffff)
+            'app-settings': z.object({
+                themeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "顏色必須是 Hex 格式 (例如 #ff0000)"),
+                lastUpdatedBy: z.string().optional()
+            }),
+            
+            // 規則 B: 'action-logs' Array 裡的元素必須包含 action 和 time
+            'action-logs': z.array(z.object({
+                action: z.string(),
+                time: z.string()
+            }))
+        }
     });
 
     (window as any).client = client;
@@ -370,7 +386,7 @@ async function bootstrap() {
             document.body.style.transition = 'background-color 0.3s ease';
         }
     });
-    
+
 }
 
 bootstrap().catch(err => {

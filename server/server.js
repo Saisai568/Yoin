@@ -1,131 +1,120 @@
-// server/server.js
-// ============================================================
-// Layer 2: Transport — Blind Relay + Smart Sync Server
-// ============================================================
 const WebSocket = require('ws');
-const url = require('url');
-const { YoinDoc } = require('../core/pkg-node'); 
 
 const wss = new WebSocket.Server({ port: 8080 });
 
 // ==========================================
-// 通訊協議常數 (需與前端一致)
+// 1. Protocol Constants
 // ==========================================
-const MSG_SYNC_STEP_1 = 0;       // Client → Server: State Vector 請求
-const MSG_SYNC_STEP_2 = 1;       // Client ↔ Server: 實質更新 (Update / Diff)
-const MSG_SYNC_STEP_1_REPLY = 2; // Server → Client: 雙向同步回應
-const MSG_AWARENESS = 3;         // Awareness: Blind Relay (不解析、不儲存)
+// 必須與前端 YoinClient.ts 保持一致
+const MSG_SYNC_STEP_1 = 0;
+const MSG_SYNC_STEP_2 = 1;
+const MSG_SYNC_STEP_1_REPLY = 2;
+const MSG_AWARENESS = 3;
+const MSG_JOIN_ROOM = 4; // [New]
 
 // ==========================================
-// 🧠 房間管理器
+// 2. Room State Management
 // ==========================================
+// Map<RoomID, Set<WebSocket>>
 const rooms = new Map();
-const COMPACTION_THRESHOLD = 50;
 
-console.log("🚀 Yoin Smart Server (v2.0 with Blind Relay Awareness) 啟動於 8080");
+// Map<WebSocket, RoomID> (Reverse lookup for quick disconnect handling)
+const clientRooms = new Map();
 
-function getRoom(roomId) {
-    if (!rooms.has(roomId)) {
-        console.log(`[Server] 初始化新房間: ${roomId}`);
-        rooms.set(roomId, {
-            doc: new YoinDoc(),
-            updateCount: 0,
-            clients: new Set()
-        });
-    }
-    return rooms.get(roomId);
-}
+console.log('🚀 Yoin Room-Aware Server running on ws://localhost:8080');
 
-/**
- * 廣播工具：將原始訊息轉發給房間內除了發送者以外的所有人
- * 用於 Awareness Blind Relay 及 CRDT 更新轉發
- */
-function broadcastToOthers(room, sender, data) {
-    room.clients.forEach(client => {
-        if (client !== sender && client.readyState === WebSocket.OPEN) {
-            client.send(data);
-        }
-    });
-}
+wss.on('connection', (ws) => {
+    console.log('[Server] New connection established');
 
-wss.on('connection', function connection(ws, req) {
-    const parsedUrl = url.parse(req.url, true);
-    const roomId = parsedUrl.query.room || 'default';
-    
-    const room = getRoom(roomId);
-    room.clients.add(ws);
-    ws.roomId = roomId;
-
-    console.log(`[連線] 用戶進入 ${roomId} (在線: ${room.clients.size})`);
-
-    // ==========================================
-    // 🔄 協議處理 (Binary Protocol)
-    // ==========================================
-    ws.on('message', function incoming(message) {
+    ws.on('message', (message) => {
+        // Convert to Uint8Array for consistent handling
         const data = new Uint8Array(message);
-        if (data.length === 0) return;
-
         const type = data[0];
         const payload = data.slice(1);
 
-        switch (type) {
-            case MSG_SYNC_STEP_1: {
-                // 【新用戶連線：計算並回傳缺少的 Diff】
-                console.log(`[Sync] 用戶請求同步 ${roomId}`);
-                const missingUpdate = room.doc.get_missing_updates(payload);
-                const response = new Uint8Array(missingUpdate.length + 1);
-                response[0] = MSG_SYNC_STEP_2;
-                response.set(missingUpdate, 1);
-                ws.send(response);
-                break;
+        // ------------------------------------------------
+        // Case A: Handshake - Join Room
+        // ------------------------------------------------
+        if (type === MSG_JOIN_ROOM) {
+            const roomId = new TextDecoder().decode(payload);
+            
+            // 1. If client was already in a room, leave it first
+            const oldRoom = clientRooms.get(ws);
+            if (oldRoom) {
+                leaveRoom(ws, oldRoom);
             }
 
-            case MSG_SYNC_STEP_2: {
-                // 【CRDT 更新：寫入 + 廣播 + 壓縮】
-                try {
-                    room.doc.apply_update(payload);
-                    room.updateCount++;
-                } catch (e) {
-                    console.error("Rust Apply Error:", e);
-                    return;
-                }
-                broadcastToOthers(room, ws, data);
+            // 2. Join the new room
+            joinRoom(ws, roomId);
+            return;
+        }
 
-                if (room.updateCount >= COMPACTION_THRESHOLD) {
-                    performCompaction(roomId, room);
-                }
-                break;
-            }
-
-            case MSG_AWARENESS: {
-                // 【🎯 Blind Relay：不解析、不儲存、直接轉發】
-                broadcastToOthers(room, ws, data);
-                break;
-            }
-
-            default:
-                console.warn(`[Server] 未知訊息類型: ${type}`);
+        // ------------------------------------------------
+        // Case B: Broadcast (Sync/Awareness)
+        // ------------------------------------------------
+        const currentRoom = clientRooms.get(ws);
+        if (currentRoom) {
+            broadcastToRoom(ws, currentRoom, data);
+        } else {
+            // Client hasn't joined a room yet, ignore message or log warning
+            // console.warn('[Server] Client sent message before joining a room');
         }
     });
 
     ws.on('close', () => {
-        const room = rooms.get(ws.roomId);
-        if (room) {
-            room.clients.delete(ws);
-            if (room.clients.size === 0) {
-                console.log(`[Server] 房間 ${ws.roomId} 已空，快照暫存於記憶體`);
-            }
+        const currentRoom = clientRooms.get(ws);
+        if (currentRoom) {
+            leaveRoom(ws, currentRoom);
         }
+        console.log('[Server] Connection closed');
+    });
+
+    ws.on('error', (err) => {
+        console.error('[Server] Connection error:', err);
     });
 });
 
 // ==========================================
-// 💾 壓縮邏輯
+// 3. Helper Functions
 // ==========================================
-function performCompaction(roomId, room) {
-    console.time(`Compaction-${roomId}`);
-    const snapshot = room.doc.snapshot();
-    console.log(`[Compaction] 房間 ${roomId} 執行壓縮。大小: ${snapshot.length} bytes`);
-    room.updateCount = 0;
-    console.timeEnd(`Compaction-${roomId}`);
+
+function joinRoom(ws, roomId) {
+    if (!rooms.has(roomId)) {
+        rooms.set(roomId, new Set());
+        console.log(`[Room] Created new room: "${roomId}"`);
+    }
+    
+    const room = rooms.get(roomId);
+    room.add(ws);
+    clientRooms.set(ws, roomId);
+    
+    console.log(`[Room] Client joined "${roomId}" (Total: ${room.size})`);
+}
+
+function leaveRoom(ws, roomId) {
+    const room = rooms.get(roomId);
+    if (room) {
+        room.delete(ws);
+        clientRooms.delete(ws);
+        
+        console.log(`[Room] Client left "${roomId}" (Total: ${room.size})`);
+
+        // Auto-cleanup empty rooms to save memory
+        if (room.size === 0) {
+            rooms.delete(roomId);
+            console.log(`[Room] Destroyed empty room: "${roomId}"`);
+        }
+    }
+}
+
+function broadcastToRoom(sender, roomId, data) {
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    room.forEach((client) => {
+        // Don't send back to sender, and ensure client is open
+        if (client !== sender && client.readyState === WebSocket.OPEN) {
+            client.send(data);
+        }
+    });
 }

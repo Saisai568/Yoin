@@ -2,6 +2,7 @@ import { YoinDoc } from '../../../core/pkg-web/core';
 import { StorageAdapter } from './storage';
 import { NetworkProvider } from './network';
 import type { YoinConfig, AwarenessState, AwarenessPartial, AwarenessCallback, NetworkStatus } from "./types";
+import { z } from 'zod';
 
 // ============================================================
 // 通訊協議常數
@@ -10,6 +11,7 @@ const MSG_SYNC_STEP_1 = 0;
 const MSG_SYNC_STEP_2 = 1;
 const MSG_SYNC_STEP_1_REPLY = 2;
 const MSG_AWARENESS = 3;
+const MSG_JOIN_ROOM = 4;
 
 // ============================================================
 // Layer 3: Logic Core — Awareness 狀態管理 + CRDT 同步引擎
@@ -23,6 +25,9 @@ export class YoinClient {
     // CRDT 文字訂閱者
     private listeners: ((text: string) => void)[] = [];
     private saveTimeout: number | undefined;
+
+    // [新增] 儲存驗證規則
+    private schemas: Record<string, z.ZodTypeAny> | undefined;
 
     // ==========================================
     // Awareness 系統屬性
@@ -210,6 +215,9 @@ export class YoinClient {
         this.doc = new YoinDoc();
         this.storage = new StorageAdapter(config.dbName);
 
+        this.config = config;
+        this.schemas = config.schemas; // [新增] 注入 Schema 設定
+
         // 將 docId 轉化為房間 URL
         const roomUrl = new URL(config.url);
         roomUrl.searchParams.append('room', config.docId);
@@ -219,11 +227,18 @@ export class YoinClient {
 
             // 事件 1：連線成功
             () => {
+                // [Step 1] 加入房間 (Handshake)
+                // 將 docId (Room ID) 編碼並發送給 Server
+                const roomNameBytes = new TextEncoder().encode(this.config.docId);
+                this.network.broadcast(this.encodeMessage(MSG_JOIN_ROOM, roomNameBytes));
+                console.log(`🚪 [Network] Joining room: ${this.config.docId}`);
+
+                // [Step 2] 開始同步流程
                 const sv = this.doc.get_state_vector();
                 this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1, sv));
                 console.log("🔄 [Sync] Sent initial State Vector");
 
-                // 連線時廣播自己的最新狀態
+                // [Step 3] 廣播 Awareness
                 const myState = this.awarenessStates.get(this.myClientId);
                 if (myState) this.setAwareness({});
             },
@@ -417,8 +432,10 @@ export class YoinClient {
     // High-level API: Map (State & Config Sync)
     // ==========================================
     public async setMap(mapName: string, key: string, value: any) {
+        // [新增] 驗證攔截：如果不合法，會直接 throw Error，後面的 Rust 操作不會執行
+        this.validateMap(mapName, key, value);
+
         const valueStr = JSON.stringify(value);
-        // Call optimized Rust API
         const deltaUpdate = this.doc.map_set(mapName, key, valueStr);
         
         const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
@@ -476,8 +493,10 @@ public getMap(mapName: string): Record<string, any> {
     // High-level API: Array (List & History Sync)
     // ==========================================
     public async pushArray(arrayName: string, item: any) {
+        // [新增] 驗證攔截
+        this.validateArray(arrayName, item);
+
         const valueStr = JSON.stringify(item);
-        // Call optimized Rust API
         const deltaUpdate = this.doc.array_push(arrayName, valueStr);
         
         const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
@@ -529,8 +548,23 @@ public getMap(mapName: string): Record<string, any> {
      */
     public setMapDeep(mapName: string, path: string[], value: string | number | boolean) {
         try {
-            // Rust map_set_deep now returns the delta update directly
-            // Cast to Uint8Array as WASM Result is treated as a return value if successful
+            // [新增] 驗證攔截
+            // Deep Map 比較複雜，我們驗證路徑的第一層 Key (如果存在)
+            // 或是你可以定義更複雜的 Deep Schema 邏輯
+            if (path.length > 0) {
+                 // 這裡做一個簡單的假設：Deep Set 通常也是修改某個物件的屬性
+                 // 我們嘗試驗證根屬性。如果 path=['style', 'color']，我們目前僅驗證 mapName 下的 'style' 是否存在
+                 // 若要完整驗證 Deep Set，需要 Zod 的 deep partial parsing，這裡先做基礎防護
+                 // 暫時僅對第一層 Key 做存在性檢查 (若 schema 是 z.object)
+                 /* if (this.schemas && this.schemas[mapName] instanceof z.ZodObject) {
+                     const rootKey = path[0];
+                     if (!this.schemas[mapName].shape[rootKey]) {
+                         console.warn(`[Yoin] Warning: Deep set on undocumented root key '${rootKey}'`);
+                     }
+                 }
+                 */
+            }
+
             const deltaUpdate = this.doc.map_set_deep(mapName, path, value) as Uint8Array;
             
             const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
@@ -540,6 +574,7 @@ public getMap(mapName: string): Record<string, any> {
             this.scheduleSave();
         } catch (e) {
             console.error("[Yoin] Deep Set Error:", e);
+            // 這裡捕捉了錯誤，所以不會崩潰，但會印出錯誤
         }
     }
 
@@ -601,4 +636,73 @@ public getMap(mapName: string): Record<string, any> {
             console.error("[Yoin] Redo failed:", e);
         }
     }
+
+    // ==========================================
+    // 🛡️ Schema Validation Helpers (Fixed)
+    // ==========================================
+
+    /**
+     * 驗證 Map 的單一欄位寫入
+     */
+    private validateMap(mapName: string, key: string, value: any) {
+        if (!this.schemas || !this.schemas[mapName]) return;
+
+        const schema = this.schemas[mapName];
+
+        try {
+            if (schema instanceof z.ZodObject) {
+                // 強制轉型為 ZodObject<any> 以存取 shape
+                const objectSchema = schema as z.ZodObject<any>;
+                const fieldSchema = objectSchema.shape[key];
+                
+                if (!fieldSchema) {
+                    console.warn(`[Yoin] Warning: Writing to undocumented field '${key}' in map '${mapName}'`);
+                    return;
+                }
+                // 強制轉型為 ZodTypeAny 以確保 parse 方法存在
+                (fieldSchema as z.ZodTypeAny).parse(value);
+
+            } else if (schema instanceof z.ZodRecord) {
+                // 存取 valueSchema 而無需強制轉型為特定的 ZodRecord 泛型
+                const recordSchema = schema as any;
+                if (recordSchema.valueSchema) {
+                    recordSchema.valueSchema.parse(value);
+                } else {
+                    (schema as z.ZodTypeAny).parse(value);
+                }
+
+            } else {
+                // 其他情況 (如 z.any)，嘗試直接驗證
+                // 通常用於 setMap 整個 value 是一單值的狀況
+                (schema as z.ZodTypeAny).parse(value);
+            }
+        } catch (e) {
+            console.error(`[Yoin] ❌ Schema Validation Failed for Map '${mapName}' key '${key}':`, e);
+            throw e; // 阻斷寫入
+        }
+    }
+
+    /**
+     * 驗證 Array 的元素寫入
+     */
+    private validateArray(arrayName: string, item: any) {
+        if (!this.schemas || !this.schemas[arrayName]) return;
+
+        const schema = this.schemas[arrayName];
+
+        try {
+            if (schema instanceof z.ZodArray) {
+                // 強制轉型為 ZodArray<any> 以存取 element
+                const arraySchema = schema as z.ZodArray<any>;
+                arraySchema.element.parse(item);
+            } else {
+                 console.warn(`[Yoin] Warning: Schema for array '${arrayName}' is not a z.array()`);
+            }
+        } catch (e) {
+            console.error(`[Yoin] ❌ Schema Validation Failed for Array '${arrayName}':`, e);
+            throw e; // 阻斷寫入
+        }
+    }
+
+    
 }

@@ -2,7 +2,7 @@
 // ============================================================
 // Layer 1: Interface — 定義 Yoin 2.0 感知系統的資料契約
 // ============================================================
-
+import { z } from 'zod';
 /**
  * YoinClient 初始化設定
  */
@@ -40,6 +40,19 @@ export interface AwarenessState {
     offline?: boolean;
     /** 最後更新時間戳 (ms)，用於 Heartbeat 判活 */
     timestamp: number;
+}
+
+export interface YoinConfig {
+    url: string;
+    dbName: string;
+    docId: string;
+    awarenessThrottleMs?: number;
+    heartbeatIntervalMs?: number;
+    heartbeatTimeoutMs?: number;
+    
+    // [新增] Schema 定義：Map 名稱 -> Zod Schema
+    // 例如: { "settings": z.object({ theme: z.string() }) }
+    schemas?: Record<string, z.ZodTypeAny>;
 }
 
 /**
