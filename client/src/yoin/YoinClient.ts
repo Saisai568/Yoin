@@ -303,14 +303,16 @@ export class YoinClient {
     private notifyNetworkListeners(status: NetworkStatus) {
         this.networkListeners.forEach(listener => listener(status));
     }
+
     /**
-     * 核心方法：插入文字
-     * 這是使用者唯一需要呼叫的寫入方法
+     * Core method: Insert text.
+     * This calls the Rust API which returns the delta update immediately.
      */
     public async insertText(index: number, text: string) {
-        const deltaUpdate = this.doc.insert_and_get_update("content", index, text);
+        // Call Rust API to get the update delta directly
+        const deltaUpdate = this.doc.insert_text("content", index, text);
+        
         const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
-
         this.network.broadcast(msg);
         
         this.notifyListeners();
@@ -318,12 +320,13 @@ export class YoinClient {
     }
 
     /**
-     * 刪除指定範圍的文字
+     * Delete text in a specific range.
      */
     public async deleteText(index: number, length: number) {
-        const deltaUpdate = this.doc.delete_text_and_get_update("content", index, length);
+        const deltaUpdate = this.doc.delete_text("content", index, length);
         
-        this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate));
+        const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
+        this.network.broadcast(msg);
         
         this.notifyListeners();
         this.scheduleSave();
@@ -411,31 +414,45 @@ export class YoinClient {
     }
 
     // ==========================================
-    // 高階 API：Map (狀態與設定同步)
+    // High-level API: Map (State & Config Sync)
     // ==========================================
     public async setMap(mapName: string, key: string, value: any) {
         const valueStr = JSON.stringify(value);
-        const deltaUpdate = this.doc.map_set_and_get_update(mapName, key, valueStr);
-        this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate));
+        // Call optimized Rust API
+        const deltaUpdate = this.doc.map_set(mapName, key, valueStr);
+        
+        const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
+        this.network.broadcast(msg);
+        
         this.notifyListeners();
         this.scheduleSave();
     }
 
-    public getMap(mapName: string): Record<string, any> {
+public getMap(mapName: string): Record<string, any> {
         try {
             const jsonStr = this.doc.map_get_all(mapName);
-            // 防禦：如果 Rust 傳回空值，直接回傳空物件
-            if (!jsonStr) return {}; 
+            // Guard: Return empty object if Rust returns empty
+            if (!jsonStr || jsonStr === "{}") return {}; 
             
             const rawMap = JSON.parse(jsonStr);
             const result: Record<string, any> = {};
+            
+            // Recursively parse inner JSON strings if necessary
             for (const key in rawMap) {
-                try { result[key] = JSON.parse(rawMap[key]); } 
+                try { 
+                    // Values stored via map_set are stringified JSON, so we try to parse them.
+                    // Native values from map_set_deep might not need parsing, but this handles mixed cases.
+                    if (typeof rawMap[key] === 'string') {
+                         result[key] = JSON.parse(rawMap[key]);
+                    } else {
+                         result[key] = rawMap[key];
+                    }
+                } 
                 catch { result[key] = rawMap[key]; }
             }
             return result;
         } catch (error) {
-            console.warn(`[Yoin] 讀取 Map (${mapName}) 失敗，回傳空狀態。原因:`, error);
+            console.warn(`[Yoin] Failed to read Map (${mapName}), returning empty state. Error:`, error);
             return {};
         }
     }
@@ -456,12 +473,16 @@ export class YoinClient {
     }
 
     // ==========================================
-    // 高階 API：Array (列表與歷史同步)
+    // High-level API: Array (List & History Sync)
     // ==========================================
     public async pushArray(arrayName: string, item: any) {
         const valueStr = JSON.stringify(item);
-        const deltaUpdate = this.doc.array_push_and_get_update(arrayName, valueStr);
-        this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate));
+        // Call optimized Rust API
+        const deltaUpdate = this.doc.array_push(arrayName, valueStr);
+        
+        const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
+        this.network.broadcast(msg);
+        
         this.notifyListeners();
         this.scheduleSave();
     }
@@ -501,38 +522,22 @@ export class YoinClient {
     // ==========================================
     
     /**
-     * 深度修改 Map 數值 (支援白板協作)
-     * @param mapName 根 Map 名稱 (例如 "whiteboard")
-     * @param path 路徑陣列 (例如 ["shape-id-123", "style", "color"])
-     * @param value 值
+     * Modify nested Map values (supports whiteboard collaboration).
+     * @param mapName Root Map name (e.g., "whiteboard")
+     * @param path Path array (e.g., ["shape-id-123", "style", "color"])
+     * @param value Value to set
      */
     public setMapDeep(mapName: string, path: string[], value: string | number | boolean) {
         try {
-            this.doc.map_set_deep(mapName, path, value);
+            // Rust map_set_deep now returns the delta update directly
+            // Cast to Uint8Array as WASM Result is treated as a return value if successful
+            const deltaUpdate = this.doc.map_set_deep(mapName, path, value) as Uint8Array;
             
-            // 觸發更新
-            const update = this.doc.export_update(); // 這裡可以優化，但先求有
-            // 注意：Rust 內部的 transaction 已經處理好 update 了
-            // 我們只需要觸發儲存和通知
-            
-            // 由於 map_set_deep 會產生 update，我們需要抓出 diff 廣播嗎？
-            // 其實 Yrs 的 observe 機制會處理，但我們目前的架構是手動廣播。
-            // 為了簡化，我們先廣播一次「全量 diff」給別人 (或是像 deleteText 那樣做)
-            // *最佳實踐*：Rust 端應該回傳 update binary，這裡先暫用通用廣播
-            
-            const diff = this.doc.snapshot(); // 暫時用 snapshot 確保同步，或是用 get_update
-            // 實際上 deleteText 那邊我們是用 delete_text_and_get_update
-            // 建議 Rust 端 map_set_deep 也回傳 Vec<u8> update，這裡先簡化流程：
+            const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
+            this.network.broadcast(msg);
             
             this.notifyListeners();
             this.scheduleSave();
-            
-            // 這裡依然需要廣播，建議回頭去 Rust 把 map_set_deep 改成回傳 Vec<u8>
-            // 但為了不讓你改太多 Rust，我們先用這招：
-            const sv = this.doc.get_state_vector();
-            this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1_REPLY, sv)); 
-            // ^ 偷懶解法：告訴別人「我更新了，你們來跟我同步吧」
-            
         } catch (e) {
             console.error("[Yoin] Deep Set Error:", e);
         }
@@ -549,6 +554,51 @@ export class YoinClient {
         } catch (e) {
             console.error("[Yoin] Get JSON Error:", e);
             return null;
+        }
+    }
+
+    // ==========================================
+    // ↩️ Undo / Redo API
+    // ==========================================
+
+    public async undo() {
+        try {
+            // Call Rust to perform undo and get the inverse operation (diff)
+            const diff = this.doc.undo();
+            
+            // If diff is not empty, it means a change happened
+            if (diff && diff.length > 0) {
+                // 1. Broadcast the undo effect to peers
+                const msg = this.encodeMessage(MSG_SYNC_STEP_2, diff);
+                this.network.broadcast(msg);
+                
+                // 2. Update local UI
+                this.notifyListeners();
+                
+                // 3. Persist to IndexedDB
+                this.scheduleSave();
+                
+            }
+        } catch (e) {
+            console.error("[Yoin] Undo failed:", e);
+        }
+    }
+
+    public async redo() {
+        try {
+            const diff = this.doc.redo();
+            
+            if (diff && diff.length > 0) {
+                const msg = this.encodeMessage(MSG_SYNC_STEP_2, diff);
+                this.network.broadcast(msg);
+                
+                this.notifyListeners();
+                this.scheduleSave();
+
+            } else {
+            }
+        } catch (e) {
+            console.error("[Yoin] Redo failed:", e);
         }
     }
 }

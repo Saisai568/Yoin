@@ -1,20 +1,19 @@
 // client/src/renderers.ts
 // ============================================================
-// Layer 4a: Rendering — 純函式產生游標 / 頭像 DOM 元素
+// Layer: Rendering — Pure function generates cursor/avatar DOM element
 // ============================================================
-// 📌 所有函式皆為 Pure Function：接收參數 → 回傳 HTMLElement
-// 📌 不處理定位邏輯，定位由 main.ts 的控制迴圈負責
+// * All functions are pure functions: receive parameters → return HTMLElement
+// * Does not handle positioning logic, positioning is managed by the control loop in main.ts
 
 import type { CursorRenderer } from './yoin/types';
 
-// ==========================================
-// 🎯 游標渲染器
-// ==========================================
 
 /**
- * 標準游標：Figma / Miro 風格箭頭 + 名字標籤
- * SVG 箭頭尖端位於左上角 (0,0)，方便直接用 translate 定位
+ * Standard Cursor: Figma / Miro Style Arrow + Name Tag
+ * The tip of the SVG arrow is at the top-left corner (0,0), 
+ * making it convenient to position directly using translate.
  */
+
 export const createDefaultCursor: CursorRenderer = (color: string, name: string): HTMLElement => {
     const el = document.createElement('div');
     el.style.cssText = `
@@ -58,7 +57,7 @@ export const createDefaultCursor: CursorRenderer = (color: string, name: string)
 };
 
 /**
- * Emoji 風格游標：👆 手指 + 描邊名字標籤
+ * Emoji Style Cursor: 👆 Finger + Outlined Name Tag
  */
 export const createEmojiCursor: CursorRenderer = (color: string, name: string): HTMLElement => {
     const el = document.createElement('div');
@@ -90,16 +89,17 @@ export const createEmojiCursor: CursorRenderer = (color: string, name: string): 
 };
 
 // ==========================================
-// 🧑‍🤝‍🧑 頭像渲染器
+// 🧑‍🤝‍🧑 Avatar Renderer
 // ==========================================
 
 /**
- * 建立圓形頭像元素
- * @param name  使用者名稱 (取首字母)
- * @param color 代表色
- * @param isSelf 是否為自己 (加粗外框)
- * @param clientId 唯一識別碼 (用於 tooltip)
+ * Create a circular avatar element
+ * @param name  User's name (take the first letter)
+ * @param color Representative color
+ * @param isSelf Whether it is the user themselves (add bold border)
+ * @param clientId Unique identifier (used for tooltip)
  */
+
 export function createAvatar(
     name: string,
     color: string,

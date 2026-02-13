@@ -1,17 +1,11 @@
 // client/src/main.ts
-// ============================================================
-// Layer 4b: Control Loop — 連結 Logic Core ↔ DOM
-// ============================================================
-// 📌 責任：事件綁定、rAF 節流、DOM Diffing、渲染器切換
-// 📌 不包含任何業務邏輯或 DOM 產生函式
-
 import { initYoin, YoinClient, initPanicHook } from './yoin';
 import { createDefaultCursor, createEmojiCursor, createAvatar } from './renderers';
 import type { CursorRenderer, AwarenessState } from './yoin/types';
 import './style.css';
 
 // ==========================================
-// 工具函式
+// Tool function log: output to the page and console at the same time
 // ==========================================
 function log(msg: string) {
     const container = document.getElementById('log-container');
@@ -26,13 +20,13 @@ function log(msg: string) {
 
 async function bootstrap() {
     // ==========================================
-    // 1. 初始化 WASM + Client
+    // 1. Init WASM + Client
     // ==========================================
-    log("🚀 正在啟動 WASM...");
+    log("🚀 Starting WASM...");
     await initYoin();
-    log("✅ WASM 載入完成");
+    log("✅ WASM loaded successfully");
     initPanicHook();
-    log("✅ WASM Panic Hook 已啟動");
+    log("✅ WASM Panic Hook Activated");
 
     const urlParams = new URLSearchParams(window.location.search);
     const currentRoom = urlParams.get('room') || 'default-room';
@@ -47,13 +41,13 @@ async function bootstrap() {
     });
 
     (window as any).client = client;
-    console.log("✅ Yoin Client 已掛載到 window.client");
+    console.log("✅ Yoin Client has been mounted to window.client for debugging");
 
     const docIdEl = document.getElementById('doc-id');
     if (docIdEl) docIdEl.innerText = currentRoom;
 
     // ==========================================
-    // 2. Awareness：身分初始化
+    // 2. Awareness: Identity Initialization
     // ==========================================
     const randomColors = ['#ff7675', '#74b9ff', '#55efc4', '#fdcb6e', '#a29bfe'];
     const myColor = randomColors[Math.floor(Math.random() * randomColors.length)];
@@ -63,7 +57,7 @@ async function bootstrap() {
     client.setAwareness({ name: myName, color: myColor });
 
     // ==========================================
-    // 3. 🎯 rAF 節流的滑鼠輸入 (Performance: Input)
+    // 3. Mouse Input Throttled by rAF (Performance: Input)
     // ==========================================
     let pendingCursor: { x: number; y: number } | null = null;
     let rafScheduled = false;
@@ -222,7 +216,7 @@ async function bootstrap() {
         if (arrayDisplay) {
             arrayDisplay.innerHTML = '';
             if (arrayData.length === 0) {
-                arrayDisplay.innerHTML = '<li>目前沒有日誌</li>';
+                arrayDisplay.innerHTML = '<li>No logs available yet</li>';
             } else {
                 arrayData.forEach(item => {
                     const li = document.createElement('li');
@@ -251,7 +245,7 @@ async function bootstrap() {
     if (btnClear) {
         btnClear.onclick = () => {
             client.clearText();
-            log(`🗑️ 已清空筆記內容`);
+            log(`🗑️ Notes have been cleared`);
         };
     }
 
@@ -259,11 +253,11 @@ async function bootstrap() {
     const btnUpdateMap = document.getElementById('btn-update-map');
     if (btnUpdateMap) {
         btnUpdateMap.onclick = () => {
-            const colors = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6'];
+            const colors = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#1abc9c', '#e67e22', '#34495e', '#d35400'];
             const randomColor = colors[Math.floor(Math.random() * colors.length)];
             client.setMap('app-settings', 'themeColor', randomColor);
             client.setMap('app-settings', 'lastUpdatedBy', myName);
-            log(`🎨 已更新主題顏色為 ${randomColor}`);
+            log(`🎨 Theme color has been updated to ${randomColor}`);
         };
     }
 
@@ -273,7 +267,7 @@ async function bootstrap() {
         btnPushArray.onclick = () => {
             const timeStr = new Date().toLocaleTimeString();
             client.pushArray('action-logs', { action: 'CLICK', time: timeStr });
-            log(`➕ 已新增日誌紀錄`);
+            log(`➕ Log entry added`);
         };
     }
 
@@ -285,14 +279,14 @@ async function bootstrap() {
         if (!statusEl) return;
 
         if (status === 'online') {
-            statusEl.innerText = '🟢 已連線';
+            statusEl.innerText = '🟢 Connected';
             statusEl.className = 'status-indicator online';
         } else if (status === 'connecting') {
-            statusEl.innerText = '🟡 連線中...';
+            statusEl.innerText = '🟡 Connecting...';
             statusEl.className = 'status-indicator';
             statusEl.style.color = '#f39c12';
         } else {
-            statusEl.innerText = '🔴 離線 (重連中...)';
+            statusEl.innerText = '🔴 Offline (Reconnecting)...)';
             statusEl.className = 'status-indicator offline';
         }
     });
@@ -313,8 +307,72 @@ async function bootstrap() {
             client.setAwareness({ selection: shapeId });
         });
     });
+
+    // ... inside bootstrap() function ...
+
+    // ==========================================
+    // Undo / Redo Buttons
+    // ==========================================
+    const btnUndo = document.getElementById('btn-undo');
+    if (btnUndo) {
+        btnUndo.onclick = () => {
+            client.undo();
+        };
+    }
+
+    const btnRedo = document.getElementById('btn-redo');
+    if (btnRedo) {
+        btnRedo.onclick = () => {
+            client.redo();
+        };
+    }
+    
+    // Optional: Keyboard shortcuts (Ctrl+Z / Ctrl+Y)
+    window.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            e.preventDefault();
+            client.undo();
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+            e.preventDefault();
+            client.redo();
+        }
+    });
+    
+    // ==========================================
+    // 🎨 Test Case 3: Map Undo/Redo (Theme Color)
+    // ==========================================
+    
+    // 1. 綁定按鈕事件 (寫入 Map)
+    const btnTheme = document.getElementById('btn-theme');
+    if (btnTheme) {
+        btnTheme.onclick = () => {
+            const colors = ['#dfe6e9', '#ffeaa7', '#81ecec', '#fab1a0', '#74b9ff', '#a29bfe'];
+            const randomColor = colors[Math.floor(Math.random() * colors.length)];
+            
+            console.log(`[UI] Setting theme color to: ${randomColor}`);
+            // "config" 是 map 名稱, "bg" 是 key
+            client.setMap('config', 'bg', randomColor);
+        };
+    }
+
+    // 2. 修改 Subscribe 邏輯 (監聽 Map 變更並渲染)
+    // 注意：原本的 subscribe 可能只單純更新文字，我們需要擴充它
+    client.subscribe((text) => {
+        // A. 更新文字框 (既有邏輯)
+        const display = document.getElementById('display'); // 假設你有個顯示文字的地方
+        if (display) (display as HTMLTextAreaElement).value = text;
+
+        // B. 更新背景色 (Map 邏輯)
+        const config = client.getMap('config');
+        if (config.bg) {
+            document.body.style.backgroundColor = config.bg;
+            document.body.style.transition = 'background-color 0.3s ease';
+        }
+    });
+    
 }
 
 bootstrap().catch(err => {
-    console.error("啟動失敗:", err);
+    console.error("Failed to start:", err);
 });
