@@ -1,7 +1,11 @@
+// client/src/yoin/YoinClient.ts
+// ============================================================
+// Micro-kernel Core — 僅保留 CRDT Doc、Networking、Map/Array API
+// ============================================================
 import { YoinDoc } from '../../../core/pkg-web/core';
-import { StorageAdapter } from './storage';
 import { NetworkProvider } from './network';
-import type { YoinConfig, AwarenessState, AwarenessPartial, AwarenessCallback, NetworkStatus } from "./types";
+import type { YoinPlugin } from './plugin';
+import type { YoinConfig, AwarenessState, AwarenessPartial, AwarenessCallback, NetworkStatus } from './types';
 import { z } from 'zod';
 
 // ============================================================
@@ -14,20 +18,29 @@ const MSG_AWARENESS = 3;
 const MSG_JOIN_ROOM = 4;
 
 // ============================================================
-// Layer 3: Logic Core — Awareness 狀態管理 + CRDT 同步引擎
+// Micro-kernel Core
 // ============================================================
 export class YoinClient {
     private doc: YoinDoc;
-    private storage: StorageAdapter;
-    private network: NetworkProvider;
+    public network: NetworkProvider; // Public for debugging/hooks
     private config: YoinConfig;
 
-    // CRDT 文字訂閱者
+    // CRDT 文字訂閱者 (React/UI)
     private listeners: ((text: string) => void)[] = [];
-    private saveTimeout: number | undefined;
 
-    // [新增] 儲存驗證規則
+    // Schema 驗證規則
     private schemas: Record<string, z.ZodTypeAny> | undefined;
+
+    // ==========================================
+    // Plugin 系統
+    // ==========================================
+    private plugins: YoinPlugin[] = [];
+
+    // ==========================================
+    // 文件更新勾子 (供插件訂閱)
+    // ==========================================
+    private docUpdateListeners: ((update: Uint8Array) => void)[] = [];
+    private localUpdateListeners: ((update: Uint8Array) => void)[] = [];
 
     // ==========================================
     // Awareness 系統屬性
@@ -36,7 +49,7 @@ export class YoinClient {
     private awarenessStates: Map<string, AwarenessState> = new Map();
     private awarenessListeners: AwarenessCallback[] = [];
 
-    // Throttle 機制 (網路廣播防抖)
+    // Throttle 機制
     private awarenessTimeout: number | undefined;
     private pendingAwarenessUpdate: boolean = false;
 
@@ -47,176 +60,13 @@ export class YoinClient {
     private networkListeners: ((status: NetworkStatus) => void)[] = [];
 
     // ==========================================
-    // Awareness Public API
-    // ==========================================
-
-    /**
-     * 設定本地 Awareness 狀態 (支援部分更新)
-     * 系統自動填入 clientId / timestamp，外部只需傳入變動的欄位
-     *
-     * @example
-     * client.setAwareness({ cursorX: e.clientX, cursorY: e.clientY });
-     * client.setAwareness({ selection: 'shape-123' });
-     */
-    public setAwareness(partial: AwarenessPartial) {
-        const current = this.awarenessStates.get(this.myClientId);
-        const fullState: AwarenessState = {
-            // 保留上次的欄位 (name, color 等)
-            ...current,
-            // 覆寫本次變更
-            ...partial,
-            // 系統欄位永遠由引擎控制
-            clientId: this.myClientId,
-            timestamp: Date.now(),
-        } as AwarenessState;
-
-        // 1. 立即更新本地 UI 狀態
-        this.awarenessStates.set(this.myClientId, fullState);
-        this.notifyAwarenessListeners();
-
-        // 2. Throttle 網路廣播
-        const throttleMs = this.config.awarenessThrottleMs ?? 30;
-
-        if (!this.awarenessTimeout) {
-            // 冷卻期外 → 立即發送
-            this.broadcastAwareness(fullState);
-            this.awarenessTimeout = window.setTimeout(() => {
-                this.awarenessTimeout = undefined;
-                // 冷卻結束 → 補發最後一筆
-                if (this.pendingAwarenessUpdate) {
-                    this.pendingAwarenessUpdate = false;
-                    const latest = this.awarenessStates.get(this.myClientId);
-                    if (latest) this.broadcastAwareness(latest);
-                }
-            }, throttleMs);
-        } else {
-            // 冷卻中 → 標記有待發更新
-            this.pendingAwarenessUpdate = true;
-        }
-    }
-
-    /**
-     * 訂閱 Awareness 狀態變化
-     * @returns 取消訂閱的函式
-     */
-    public onAwarenessChange(callback: AwarenessCallback): () => void {
-        this.awarenessListeners.push(callback);
-        // 訂閱當下立刻觸發一次
-        callback(this.awarenessStates);
-        // 回傳取消訂閱函式
-        return () => {
-            const idx = this.awarenessListeners.indexOf(callback);
-            if (idx !== -1) this.awarenessListeners.splice(idx, 1);
-        };
-    }
-
-    /**
-     * 主動廣播離線通知並清除本地狀態
-     * 應在 window.beforeunload 中呼叫
-     */
-    public leaveAwareness() {
-        const offlineState: AwarenessState = {
-            clientId: this.myClientId,
-            offline: true,
-            name: '',
-            color: '',
-            timestamp: Date.now(),
-        };
-
-        this.awarenessStates.delete(this.myClientId);
-        this.notifyAwarenessListeners();
-
-        // 發送離線封包 (跳過 throttle，立即送出)
-        this.broadcastAwareness(offlineState);
-    }
-
-    /**
-     * 強制觸發 Awareness 重繪 (例如切換渲染器後)
-     */
-    public notifyAwarenessListeners() {
-        const snapshot = this.awarenessStates;
-        this.awarenessListeners.forEach(fn => fn(snapshot));
-    }
-
-    // ==========================================
-    // 向下相容別名 (Deprecated → 下個版本移除)
-    // ==========================================
-    /** @deprecated 請改用 setAwareness() */
-    public setAwarenessState(state: Record<string, any>) {
-        this.setAwareness(state as AwarenessPartial);
-    }
-    /** @deprecated 請改用 onAwarenessChange() */
-    public subscribeAwareness(callback: AwarenessCallback) {
-        this.onAwarenessChange(callback);
-    }
-
-    // ==========================================
-    // Awareness 內部實作
-    // ==========================================
-
-    private broadcastAwareness(state: AwarenessState) {
-        const jsonStr = JSON.stringify(state);
-        const payload = new TextEncoder().encode(jsonStr);
-        this.network.broadcast(this.encodeMessage(MSG_AWARENESS, payload));
-    }
-
-    /**
-     * 啟動 Heartbeat 機制
-     * - 定期廣播自己的狀態 (keep-alive)
-     * - 定期垃圾回收超時的幽靈使用者
-     */
-    private startHeartbeat() {
-        const heartbeatInterval = this.config.heartbeatIntervalMs ?? 5000;
-        const timeoutThreshold = this.config.heartbeatTimeoutMs ?? 30000;
-
-        // Heartbeat 廣播：定期重發自己的狀態
-        this.heartbeatTimer = window.setInterval(() => {
-            const myState = this.awarenessStates.get(this.myClientId);
-            if (myState) {
-                this.setAwareness({}); // 空更新 → 只刷新 timestamp
-            }
-        }, heartbeatInterval);
-
-        // GC：每 3 秒掃描，清除超過閾值未更新的使用者
-        this.gcTimer = window.setInterval(() => {
-            const now = Date.now();
-            let changed = false;
-
-            for (const [clientId, state] of this.awarenessStates.entries()) {
-                if (clientId === this.myClientId) continue; // 不清自己
-                if (now - state.timestamp > timeoutThreshold) {
-                    this.awarenessStates.delete(clientId);
-                    changed = true;
-                    console.log(`[Awareness] 👻 已清除離線用戶: ${state.name} (${clientId})`);
-                }
-            }
-
-            if (changed) this.notifyAwarenessListeners();
-        }, 3000);
-    }
-
-    /**
-     * 銷毀 Client：停止所有計時器並廣播離線
-     */
-    public destroy() {
-        if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-        if (this.gcTimer) clearInterval(this.gcTimer);
-        if (this.awarenessTimeout) clearTimeout(this.awarenessTimeout);
-        if (this.saveTimeout) clearTimeout(this.saveTimeout);
-        this.leaveAwareness();
-    }
-
-    // ==========================================
-    // Constructor
+    // Constructor (輕量化 — 不再包含 Storage / Undo)
     // ==========================================
     constructor(config: YoinConfig) {
         this.config = config;
         this.myClientId = Math.random().toString(36).substring(2, 10);
         this.doc = new YoinDoc();
-        this.storage = new StorageAdapter(config.dbName);
-
-        this.config = config;
-        this.schemas = config.schemas; // [新增] 注入 Schema 設定
+        this.schemas = config.schemas;
 
         // 將 docId 轉化為房間 URL
         const roomUrl = new URL(config.url);
@@ -227,18 +77,17 @@ export class YoinClient {
 
             // 事件 1：連線成功
             () => {
-                // [Step 1] 加入房間 (Handshake)
-                // 將 docId (Room ID) 編碼並發送給 Server
+                // 1. Join Room
                 const roomNameBytes = new TextEncoder().encode(this.config.docId);
                 this.network.broadcast(this.encodeMessage(MSG_JOIN_ROOM, roomNameBytes));
                 console.log(`🚪 [Network] Joining room: ${this.config.docId}`);
 
-                // [Step 2] 開始同步流程
+                // 2. Start Sync
                 const sv = this.doc.get_state_vector();
                 this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1, sv));
                 console.log("🔄 [Sync] Sent initial State Vector");
 
-                // [Step 3] 廣播 Awareness
+                // 3. Sync Awareness
                 const myState = this.awarenessStates.get(this.myClientId);
                 if (myState) this.setAwareness({});
             },
@@ -254,7 +103,6 @@ export class YoinClient {
                         this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_2, diff));
                         const mySV = this.doc.get_state_vector();
                         this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1_REPLY, mySV));
-                        // 向新朋友自我介紹
                         const myState = this.awarenessStates.get(this.myClientId);
                         if (myState) this.setAwareness({});
                         break;
@@ -270,8 +118,15 @@ export class YoinClient {
 
                     case MSG_SYNC_STEP_2: {
                         this.doc.apply_update(payload);
+                        
+                        // 1. 通知 UI (React)
                         this.notifyListeners();
-                        this.scheduleSave();
+                        
+                        // 2. 觸發插件 onAfterUpdate (遠端更新)
+                        this.plugins.forEach(p => p.onAfterUpdate?.(payload));
+                        
+                        // 3. 觸發內部 Hook (DB Plugin 使用)
+                        this.emitDocUpdate(payload);
                         break;
                     }
 
@@ -299,18 +154,194 @@ export class YoinClient {
             }
         );
 
-        this.loadFromDisk();
         this.startHeartbeat();
     }
 
-    /** 取得本地 clientId */
+    // ==========================================
+    // Plugin API: .use()
+    // ==========================================
+
+    /**
+     * 註冊插件到核心
+     * 支援鏈式呼叫：client.use(undoPlugin).use(dbPlugin)
+     */
+    public use(plugin: YoinPlugin): this {
+        this.plugins.push(plugin);
+        plugin.onInstall(this);
+        console.log(`🔌 [Plugin] Installed: ${plugin.name}`);
+        return this;
+    }
+
+    // ==========================================
+    // 內部勾子 API (供插件訂閱)
+    // ==========================================
+
+    /**
+     * 訂閱所有文件更新 (本地 + 遠端)
+     * 適用場景：IndexedDB 持久化
+     */
+    public onDocUpdate(callback: (update: Uint8Array) => void): () => void {
+        this.docUpdateListeners.push(callback);
+        return () => {
+            const idx = this.docUpdateListeners.indexOf(callback);
+            if (idx !== -1) this.docUpdateListeners.splice(idx, 1);
+        };
+    }
+
+    /**
+     * 訂閱本地更新 (僅本端產生的 delta)
+     * 適用場景：Undo 堆疊追蹤
+     */
+    public onLocalUpdate(callback: (update: Uint8Array) => void): () => void {
+        this.localUpdateListeners.push(callback);
+        return () => {
+            const idx = this.localUpdateListeners.indexOf(callback);
+            if (idx !== -1) this.localUpdateListeners.splice(idx, 1);
+        };
+    }
+
+    /** 取得內部 WASM Doc 參照 (供進階插件使用) */
+    public getDoc(): YoinDoc {
+        return this.doc;
+    }
+
+    /** 取得設定 */
+    public getConfig(): YoinConfig {
+        return this.config;
+    }
+
+    /**
+     * 編碼並廣播一個 SYNC_STEP_2 更新
+     * 供插件（如 UndoPlugin）在執行 undo/redo 後廣播變更
+     */
+    public broadcastUpdate(update: Uint8Array): void {
+        const msg = this.encodeMessage(MSG_SYNC_STEP_2, update);
+        this.network.broadcast(msg);
+        // Important: Broadcast from undo also implies a UI update locally
+        this.notifyListeners(); 
+    }
+
+    // ==========================================
+    // Awareness Public API
+    // ==========================================
+
+    public setAwareness(partial: AwarenessPartial) {
+        const current = this.awarenessStates.get(this.myClientId);
+        const fullState: AwarenessState = {
+            ...current,
+            ...partial,
+            clientId: this.myClientId,
+            timestamp: Date.now(),
+        } as AwarenessState;
+
+        this.awarenessStates.set(this.myClientId, fullState);
+        this.notifyAwarenessListeners();
+
+        const throttleMs = this.config.awarenessThrottleMs ?? 30;
+
+        if (!this.awarenessTimeout) {
+            this.broadcastAwareness(fullState);
+            this.awarenessTimeout = window.setTimeout(() => {
+                this.awarenessTimeout = undefined;
+                if (this.pendingAwarenessUpdate) {
+                    this.pendingAwarenessUpdate = false;
+                    const latest = this.awarenessStates.get(this.myClientId);
+                    if (latest) this.broadcastAwareness(latest);
+                }
+            }, throttleMs);
+        } else {
+            this.pendingAwarenessUpdate = true;
+        }
+    }
+
+    public onAwarenessChange(callback: AwarenessCallback): () => void {
+        this.awarenessListeners.push(callback);
+        callback(this.awarenessStates);
+        return () => {
+            const idx = this.awarenessListeners.indexOf(callback);
+            if (idx !== -1) this.awarenessListeners.splice(idx, 1);
+        };
+    }
+
+    public leaveAwareness() {
+        const offlineState: AwarenessState = {
+            clientId: this.myClientId,
+            offline: true,
+            name: '',
+            color: '',
+            timestamp: Date.now(),
+        };
+
+        this.awarenessStates.delete(this.myClientId);
+        this.notifyAwarenessListeners();
+        this.broadcastAwareness(offlineState);
+    }
+
+    public notifyAwarenessListeners() {
+        const snapshot = this.awarenessStates;
+        this.awarenessListeners.forEach(fn => fn(snapshot));
+    }
+
+    // ==========================================
+    // Awareness Internal
+    // ==========================================
+
+    private broadcastAwareness(state: AwarenessState) {
+        const jsonStr = JSON.stringify(state);
+        const payload = new TextEncoder().encode(jsonStr);
+        this.network.broadcast(this.encodeMessage(MSG_AWARENESS, payload));
+    }
+
+    private startHeartbeat() {
+        const heartbeatInterval = this.config.heartbeatIntervalMs ?? 5000;
+        const timeoutThreshold = this.config.heartbeatTimeoutMs ?? 30000;
+
+        this.heartbeatTimer = window.setInterval(() => {
+            const myState = this.awarenessStates.get(this.myClientId);
+            if (myState) {
+                this.setAwareness({});
+            }
+        }, heartbeatInterval);
+
+        this.gcTimer = window.setInterval(() => {
+            const now = Date.now();
+            let changed = false;
+
+            for (const [clientId, state] of this.awarenessStates.entries()) {
+                if (clientId === this.myClientId) continue;
+                if (now - state.timestamp > timeoutThreshold) {
+                    this.awarenessStates.delete(clientId);
+                    changed = true;
+                    console.log(`[Awareness] 👻 已清除離線用戶: ${state.name} (${clientId})`);
+                }
+            }
+
+            if (changed) this.notifyAwarenessListeners();
+        }, 3000);
+    }
+
+    // ==========================================
+    // Destroy
+    // ==========================================
+    public destroy() {
+        if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+        if (this.gcTimer) clearInterval(this.gcTimer);
+        if (this.awarenessTimeout) clearTimeout(this.awarenessTimeout);
+
+        // 銷毀所有插件
+        this.plugins.forEach(p => p.onDestroy?.());
+
+        this.leaveAwareness();
+    }
+
+    // ==========================================
+    // Public Accessors
+    // ==========================================
+
     public getClientId(): string {
         return this.myClientId;
     }
 
-    // ==========================================
-    // Network 訂閱
-    // ==========================================
     public subscribeNetwork(callback: (status: NetworkStatus) => void) {
         this.networkListeners.push(callback);
     }
@@ -319,191 +350,111 @@ export class YoinClient {
         this.networkListeners.forEach(listener => listener(status));
     }
 
-    /**
-     * Core method: Insert text.
-     * This calls the Rust API which returns the delta update immediately.
-     */
+    // ==========================================
+    // Core CRDT API: Text
+    // ==========================================
+
     public async insertText(index: number, text: string) {
-        // Call Rust API to get the update delta directly
         const deltaUpdate = this.doc.insert_text("content", index, text);
-        
-        const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
-        this.network.broadcast(msg);
-        
-        this.notifyListeners();
-        this.scheduleSave();
+        this.applyLocalUpdate(deltaUpdate);
     }
 
-    /**
-     * Delete text in a specific range.
-     */
     public async deleteText(index: number, length: number) {
         const deltaUpdate = this.doc.delete_text("content", index, length);
-        
-        const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
-        this.network.broadcast(msg);
-        
-        this.notifyListeners();
-        this.scheduleSave();
+        this.applyLocalUpdate(deltaUpdate);
     }
 
-    /**
-     * 捷徑方法：一鍵清空所有文字
-     */
     public async clearText() {
         const currentText = this.getText();
         const length = currentText.length;
-        
         if (length > 0) {
-            // 從第 0 個字元開始，刪除「總長度」這麼多字
             await this.deleteText(0, length);
         }
     }
 
-    /**
-     * 讀取目前文字內容
-     */
     public getText(): string {
         return this.doc.get_text("content");
     }
 
-    /**
-     * 訂閱機制：讓 UI 可以監聽資料變動
-     * 類似 React 的 useEffect 或 addEventListener
-     */
-    public subscribe(callback: (text: string) => void) {
-        this.listeners.push(callback);
-        // 訂閱當下立刻回傳一次目前的狀態
-        callback(this.getText());
-    }
-
-    /**
-     * 私有方法：從 IndexedDB 還原資料
-     */
-    private async loadFromDisk() {
-        const data = await this.storage.load(this.config.docId);
-        if (data) {
-            console.log("📂 [Storage] Found local data, applying...");
-            this.doc.apply_update(data);
-            this.notifyListeners(); // 載入完成後通知 UI
-        } else {
-            console.log("🆕 [Storage] No local data found, starting fresh.");
-        }
-    }
-
-    /**
-     * 私有方法：儲存全量快照到 IndexedDB
-     */
-    private async persist() {
-        const snapshot = this.doc.export_update();
-        await this.storage.save(this.config.docId, snapshot);
-    }
-    /**
-     * 私有方法：通知所有訂閱者
-     */
-    private notifyListeners() {
-        const text = this.getText();
-        this.listeners.forEach(listener => listener(text));
-    }
-
-    // 新增：防抖存檔機制
-    private scheduleSave() {
-        // 如果已經有一個計時器在倒數，就取消它（重新計時）
-        if (this.saveTimeout) {
-            clearTimeout(this.saveTimeout);
-        }
-        
-        // 設定新的計時器，1000 毫秒 (1秒) 後執行真正的存檔
-        this.saveTimeout = window.setTimeout(async () => {
-            await this.persist();
-            console.log("💾 [Storage] Auto-saved to IndexedDB (Debounced)");
-        }, 1000);
-    }
-
-    // 新增私有小工具：負責幫資料戴上 1 byte 的「小帽子」
-    private encodeMessage(type: number, payload: Uint8Array): Uint8Array {
-        const msg = new Uint8Array(payload.length + 1);
-        msg[0] = type;           // 寫入 Header
-        msg.set(payload, 1);     // 寫入 Payload (從 index 1 開始放)
-        return msg;
+    public subscribe(listener: (text: string) => void): () => void {
+        this.listeners.push(listener);
+        return () => {
+            this.listeners = this.listeners.filter(l => l !== listener);
+        };
     }
 
     // ==========================================
-    // High-level API: Map (State & Config Sync)
+    // Core CRDT API: Map (With Double-Serialization Fix)
     // ==========================================
+
     public async setMap(mapName: string, key: string, value: any) {
-        // [新增] 驗證攔截：如果不合法，會直接 throw Error，後面的 Rust 操作不會執行
         this.validateMap(mapName, key, value);
-
-        const valueStr = JSON.stringify(value);
+        
+        // [FIX] Double Serialization Prevention
+        // If it's already a string, pass it directly. Otherwise stringify.
+        const valueStr = typeof value === 'string' ? value : JSON.stringify(value);
+        
         const deltaUpdate = this.doc.map_set(mapName, key, valueStr);
-        
-        const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
-        this.network.broadcast(msg);
-        
-        this.notifyListeners();
-        this.scheduleSave();
+        this.applyLocalUpdate(deltaUpdate);
     }
 
-public getMap(mapName: string): Record<string, any> {
+    public getMap(mapName: string): Record<string, any> {
         try {
             const jsonStr = this.doc.map_get_all(mapName);
-            // Guard: Return empty object if Rust returns empty
-            if (!jsonStr || jsonStr === "{}") return {}; 
-            
+            if (!jsonStr || jsonStr === "{}") return {};
+
             const rawMap = JSON.parse(jsonStr);
             const result: Record<string, any> = {};
-            
-            // Recursively parse inner JSON strings if necessary
+
             for (const key in rawMap) {
-                try { 
-                    // Values stored via map_set are stringified JSON, so we try to parse them.
-                    // Native values from map_set_deep might not need parsing, but this handles mixed cases.
+                try {
+                    // Try to parse, but if it fails (it's a raw string), use as is
                     if (typeof rawMap[key] === 'string') {
-                         result[key] = JSON.parse(rawMap[key]);
+                         // Attempt parse to handle legacy JSON strings
+                        try {
+                            result[key] = JSON.parse(rawMap[key]);
+                        } catch {
+                            // If parse fails, it's a raw string (Correct behavior for strings now)
+                            result[key] = rawMap[key];
+                        }
                     } else {
-                         result[key] = rawMap[key];
+                        result[key] = rawMap[key];
                     }
-                } 
-                catch { result[key] = rawMap[key]; }
+                } catch {
+                    result[key] = rawMap[key];
+                }
             }
             return result;
         } catch (error) {
-            console.warn(`[Yoin] Failed to read Map (${mapName}), returning empty state. Error:`, error);
+            console.warn(`[Yoin] Failed to read Map (${mapName}), returning empty state.`, error);
             return {};
         }
     }
 
-    /**
-     *  取得 Map 中的單一設定值 (不需全量轉換，效能極高)
-     */
-    public getMapItem(mapName: string, key: string): any {
+    public setMapDeep(mapName: string, path: string[], value: string | number | boolean) {
         try {
-            // 呼叫我們剛剛新增的 Rust API
-            const jsonStr = this.doc.map_get(mapName, key);
-            if (jsonStr === "null" || !jsonStr) return undefined;
-            return JSON.parse(jsonStr);
-        } catch (error) {
-            console.warn(`[Yoin] 讀取 Map 項目 (${mapName}[${key}]) 失敗:`, error);
-            return undefined;
+            // [FIX] Double Serialization Prevention
+            const valueStr = typeof value === 'string' ? value : JSON.stringify(value);
+            
+            const deltaUpdate = this.doc.map_set_deep(mapName, path, valueStr) as Uint8Array;
+            this.applyLocalUpdate(deltaUpdate);
+        } catch (e) {
+            console.error("[Yoin] Deep Set Error:", e);
         }
     }
 
     // ==========================================
-    // High-level API: Array (List & History Sync)
+    // Core CRDT API: Array (With Double-Serialization Fix)
     // ==========================================
-    public async pushArray(arrayName: string, item: any) {
-        // [新增] 驗證攔截
-        this.validateArray(arrayName, item);
 
-        const valueStr = JSON.stringify(item);
+    public async pushArray(arrayName: string, item: any) {
+        this.validateArray(arrayName, item);
+        
+        // [FIX] Double Serialization Prevention
+        const valueStr = typeof item === 'string' ? item : JSON.stringify(item);
+        
         const deltaUpdate = this.doc.array_push(arrayName, valueStr);
-        
-        const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
-        this.network.broadcast(msg);
-        
-        this.notifyListeners();
-        this.scheduleSave();
+        this.applyLocalUpdate(deltaUpdate);
     }
 
     public getArray(arrayName: string): any[] {
@@ -513,137 +464,77 @@ public getMap(mapName: string): Record<string, any> {
 
             const rawArray: string[] = JSON.parse(jsonStr);
             return rawArray.map(item => {
-                try { return JSON.parse(item); } 
-                catch { return item; }
+                try { return JSON.parse(item); }
+                catch { return item; } // Return raw string if parse fails
             });
         } catch (error) {
-            console.warn(`[Yoin] 讀取 Array (${arrayName}) 失敗，回傳空陣列。原因:`, error);
+            console.warn(`[Yoin] 讀取 Array (${arrayName}) 失敗`, error);
             return [];
         }
     }
 
-    /**
-     *  取得 Array 中的特定索引值
-     */
-    public getArrayItem(arrayName: string, index: number): any {
-        try {
-            const jsonStr = this.doc.array_get(arrayName, index);
-            if (jsonStr === "null" || !jsonStr) return undefined;
-            return JSON.parse(jsonStr);
-        } catch (error) {
-            console.warn(`[Yoin] 讀取 Array 項目 (${arrayName}[${index}]) 失敗:`, error);
-            return undefined;
-        }
+    // ==========================================
+    // 公開 notifyListeners (供插件觸發 UI 更新)
+    // ==========================================
+
+    public notifyListeners() {
+        const text = this.getText(); // Legacy support
+        this.listeners.forEach(listener => listener(text));
     }
 
     // ==========================================
-    // 🌳 提案 C：巢狀 Map API
-    // ==========================================
-    
-    /**
-     * Modify nested Map values (supports whiteboard collaboration).
-     * @param mapName Root Map name (e.g., "whiteboard")
-     * @param path Path array (e.g., ["shape-id-123", "style", "color"])
-     * @param value Value to set
-     */
-    public setMapDeep(mapName: string, path: string[], value: string | number | boolean) {
-        try {
-            // [新增] 驗證攔截
-            // Deep Map 比較複雜，我們驗證路徑的第一層 Key (如果存在)
-            // 或是你可以定義更複雜的 Deep Schema 邏輯
-            if (path.length > 0) {
-                 // 這裡做一個簡單的假設：Deep Set 通常也是修改某個物件的屬性
-                 // 我們嘗試驗證根屬性。如果 path=['style', 'color']，我們目前僅驗證 mapName 下的 'style' 是否存在
-                 // 若要完整驗證 Deep Set，需要 Zod 的 deep partial parsing，這裡先做基礎防護
-                 // 暫時僅對第一層 Key 做存在性檢查 (若 schema 是 z.object)
-                 /* if (this.schemas && this.schemas[mapName] instanceof z.ZodObject) {
-                     const rootKey = path[0];
-                     if (!this.schemas[mapName].shape[rootKey]) {
-                         console.warn(`[Yoin] Warning: Deep set on undocumented root key '${rootKey}'`);
-                     }
-                 }
-                 */
-            }
-
-            const deltaUpdate = this.doc.map_set_deep(mapName, path, value) as Uint8Array;
-            
-            const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
-            this.network.broadcast(msg);
-            
-            this.notifyListeners();
-            this.scheduleSave();
-        } catch (e) {
-            console.error("[Yoin] Deep Set Error:", e);
-            // 這裡捕捉了錯誤，所以不會崩潰，但會印出錯誤
-        }
-    }
-
-    /**
-     * 取得完整的 Map 資料 (包含巢狀結構)
-     * @param mapName Map 名稱 (例如 "shapes")
-     */
-    public getMapJSON(mapName: string): any {
-        try {
-            // 呼叫新的 Rust API
-            return this.doc.map_get_json(mapName);
-        } catch (e) {
-            console.error("[Yoin] Get JSON Error:", e);
-            return null;
-        }
-    }
-
-    // ==========================================
-    // ↩️ Undo / Redo API
-    // ==========================================
-
-    public async undo() {
-        try {
-            // Call Rust to perform undo and get the inverse operation (diff)
-            const diff = this.doc.undo();
-            
-            // If diff is not empty, it means a change happened
-            if (diff && diff.length > 0) {
-                // 1. Broadcast the undo effect to peers
-                const msg = this.encodeMessage(MSG_SYNC_STEP_2, diff);
-                this.network.broadcast(msg);
-                
-                // 2. Update local UI
-                this.notifyListeners();
-                
-                // 3. Persist to IndexedDB
-                this.scheduleSave();
-                
-            }
-        } catch (e) {
-            console.error("[Yoin] Undo failed:", e);
-        }
-    }
-
-    public async redo() {
-        try {
-            const diff = this.doc.redo();
-            
-            if (diff && diff.length > 0) {
-                const msg = this.encodeMessage(MSG_SYNC_STEP_2, diff);
-                this.network.broadcast(msg);
-                
-                this.notifyListeners();
-                this.scheduleSave();
-
-            } else {
-            }
-        } catch (e) {
-            console.error("[Yoin] Redo failed:", e);
-        }
-    }
-
-    // ==========================================
-    // 🛡️ Schema Validation Helpers (Fixed)
+    // 核心內部：統一的本地更新流程
     // ==========================================
 
     /**
-     * 驗證 Map 的單一欄位寫入
+     * 所有本地修改（insertText、setMap、pushArray…）的統一出口
      */
+    private applyLocalUpdate(deltaUpdate: Uint8Array) {
+        // 1. Plugin lifecycle: onBeforeUpdate (Local)
+        this.plugins.forEach(p => p.onBeforeUpdate?.(deltaUpdate));
+
+        // 2. 廣播
+        const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
+        this.network.broadcast(msg);
+
+        // 3. 通知 UI
+        this.notifyListeners();
+
+        // 4. Plugin lifecycle: onAfterUpdate (Local)
+        this.plugins.forEach(p => p.onAfterUpdate?.(deltaUpdate));
+
+        // 5. 勾子事件
+        this.emitLocalUpdate(deltaUpdate);
+        this.emitDocUpdate(deltaUpdate);
+    }
+
+    // ==========================================
+    // 內部勾子觸發器
+    // ==========================================
+
+    private emitDocUpdate(update: Uint8Array) {
+        this.docUpdateListeners.forEach(fn => fn(update));
+    }
+
+    private emitLocalUpdate(update: Uint8Array) {
+        this.localUpdateListeners.forEach(fn => fn(update));
+    }
+
+    // ==========================================
+    // 訊息編碼
+    // ==========================================
+
+    private encodeMessage(type: number, payload: Uint8Array): Uint8Array {
+        const msg = new Uint8Array(payload.length + 1);
+        msg[0] = type;
+        msg.set(payload, 1);
+        return msg;
+    }
+
+    // ==========================================
+    // Schema Validation
+    // ==========================================
+
     private validateMap(mapName: string, key: string, value: any) {
         if (!this.schemas || !this.schemas[mapName]) return;
 
@@ -651,19 +542,16 @@ public getMap(mapName: string): Record<string, any> {
 
         try {
             if (schema instanceof z.ZodObject) {
-                // 強制轉型為 ZodObject<any> 以存取 shape
                 const objectSchema = schema as z.ZodObject<any>;
                 const fieldSchema = objectSchema.shape[key];
-                
+
                 if (!fieldSchema) {
                     console.warn(`[Yoin] Warning: Writing to undocumented field '${key}' in map '${mapName}'`);
                     return;
                 }
-                // 強制轉型為 ZodTypeAny 以確保 parse 方法存在
                 (fieldSchema as z.ZodTypeAny).parse(value);
 
             } else if (schema instanceof z.ZodRecord) {
-                // 存取 valueSchema 而無需強制轉型為特定的 ZodRecord 泛型
                 const recordSchema = schema as any;
                 if (recordSchema.valueSchema) {
                     recordSchema.valueSchema.parse(value);
@@ -672,37 +560,55 @@ public getMap(mapName: string): Record<string, any> {
                 }
 
             } else {
-                // 其他情況 (如 z.any)，嘗試直接驗證
-                // 通常用於 setMap 整個 value 是一單值的狀況
                 (schema as z.ZodTypeAny).parse(value);
             }
         } catch (e) {
             console.error(`[Yoin] ❌ Schema Validation Failed for Map '${mapName}' key '${key}':`, e);
-            throw e; // 阻斷寫入
+            throw e;
         }
     }
 
-    /**
-     * 驗證 Array 的元素寫入
-     */
     private validateArray(arrayName: string, item: any) {
         if (!this.schemas || !this.schemas[arrayName]) return;
-
         const schema = this.schemas[arrayName];
-
         try {
             if (schema instanceof z.ZodArray) {
-                // 強制轉型為 ZodArray<any> 以存取 element
                 const arraySchema = schema as z.ZodArray<any>;
                 arraySchema.element.parse(item);
             } else {
-                 console.warn(`[Yoin] Warning: Schema for array '${arrayName}' is not a z.array()`);
+                console.warn(`[Yoin] Warning: Schema for array '${arrayName}' is not a z.array()`);
             }
         } catch (e) {
             console.error(`[Yoin] ❌ Schema Validation Failed for Array '${arrayName}':`, e);
-            throw e; // 阻斷寫入
+            throw e;
         }
     }
 
-    
+    // ==========================================
+    // ⚛️ React Integration Helpers
+    // ==========================================
+
+    /**
+     * 取得 Map 的所有資料 (JSON String)
+     * 供 useYoinMap 的 getSnapshot 使用
+     */
+    public map_get_all(mapName: string): string {
+        return this.doc.map_get_all(mapName);
+    }
+
+    /**
+     * 取得 Array 的所有資料 (JSON String)
+     * 供 useYoinArray 的 getSnapshot 使用
+     */
+    public array_get_all(arrayName: string): string {
+        return this.doc.array_get_all(arrayName);
+    }
+
+    /**
+     * 取得感知狀態 Map
+     * 供 useYoinAwareness 使用
+     */
+    public getAwarenessStates() {
+        return this.awarenessStates;
+    }
 }

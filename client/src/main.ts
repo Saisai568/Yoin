@@ -1,10 +1,13 @@
 // client/src/main.ts
-import { initYoin, YoinClient, initPanicHook } from './yoin';
+import { initYoin, YoinClient, initPanicHook, createUndoPlugin, createDbPlugin } from './yoin';
 import { createDefaultCursor, createEmojiCursor, createAvatar } from './renderers';
 import type { CursorRenderer, AwarenessState } from './yoin/types';
 import './style.css';
 import { z } from 'zod';
 import { createMapProxy, createArrayProxy } from './yoin/proxy';
+import { createLoggerPlugin } from './yoin/logger';
+
+
 
 // ==========================================
 // Tool function log: output to the page and console at the same time
@@ -33,6 +36,9 @@ async function bootstrap() {
     const urlParams = new URLSearchParams(window.location.search);
     const currentRoom = urlParams.get('room') || 'default-room';
 
+    // ==========================================
+    // Micro-kernel: 建立輕量核心
+    // ==========================================
     const client = new YoinClient({
         url: 'ws://localhost:8080',
         dbName: `YoinDemoDB-${currentRoom}`,
@@ -41,21 +47,34 @@ async function bootstrap() {
         heartbeatIntervalMs: 5000,
         heartbeatTimeoutMs: 30000,
         
-        // [新增] 資料驗證規則
+        // 資料驗證規則
         schemas: {
-            // 規則 A: 'app-settings' Map 的 themeColor 必須是 Hex 格式 (例如 #ffffff)
             'app-settings': z.object({
                 themeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "顏色必須是 Hex 格式 (例如 #ff0000)"),
                 lastUpdatedBy: z.string().optional()
             }),
-            
-            // 規則 B: 'action-logs' Array 裡的元素必須包含 action 和 time
             'action-logs': z.array(z.object({
                 action: z.string(),
                 time: z.string()
             }))
         }
     });
+
+    // ==========================================
+    // Micro-kernel: 掛載插件
+    // ==========================================
+    const { undo, redo, plugin: undoPlugin } = createUndoPlugin();
+    const { plugin: dbPlugin } = createDbPlugin({
+        dbName: `YoinDemoDB-${currentRoom}`,
+        debounceMs: 1000,
+    });
+
+    client
+        .use(dbPlugin)    // 1. IndexedDB 持久化 (先掛載，以便載入歷史資料)
+        .use(undoPlugin)  // 2. Undo/Redo 能力
+        .use(createLoggerPlugin()); // 3. Logger 插件
+
+    log('🔌 Plugins installed: yoin-db, yoin-undo');
 
     (window as any).client = client;
     console.log("✅ Yoin Client has been mounted to window.client for debugging");
@@ -332,27 +351,23 @@ async function bootstrap() {
     // ==========================================
     const btnUndo = document.getElementById('btn-undo');
     if (btnUndo) {
-        btnUndo.onclick = () => {
-            client.undo();
-        };
+        btnUndo.onclick = () => undo();  // 使用插件的 undo()
     }
 
     const btnRedo = document.getElementById('btn-redo');
     if (btnRedo) {
-        btnRedo.onclick = () => {
-            client.redo();
-        };
+        btnRedo.onclick = () => redo();  // 使用插件的 redo()
     }
     
-    // Optional: Keyboard shortcuts (Ctrl+Z / Ctrl+Y)
+    // Keyboard shortcuts (Ctrl+Z / Ctrl+Y)
     window.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
             e.preventDefault();
-            client.undo();
+            undo();
         }
         if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
             e.preventDefault();
-            client.redo();
+            redo();
         }
     });
     

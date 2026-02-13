@@ -13,7 +13,7 @@ export class NetworkProvider {
     private onConnect: ConnectCallback;             //  新增連線成功的回呼函數
     private onStatusChange: StatusCallback;         //  新增網路狀態變更的回呼函數
     private messageQueue: Uint8Array[] = [];
-
+    
     constructor(
         url: string, 
         onConnect: ConnectCallback, 
@@ -25,6 +25,11 @@ export class NetworkProvider {
         this.onMessageReceived = onMessageReceived;
         this.onStatusChange = onStatusChange;
         this.connect();
+    }
+
+    // [新增] Getter 讓外部知道連線狀態
+    public get isConnected(): boolean {
+        return this.socket !== null && this.socket.readyState === WebSocket.OPEN;
     }
 
     private connect(): void {
