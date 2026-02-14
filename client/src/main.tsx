@@ -18,7 +18,7 @@ async function bootstrap() {
     const room = urlParams.get('room') || 'react-demo';
 
     const client = new YoinClient({
-        url: 'ws://localhost:8080',
+        url: 'wss://yoin-worker.saiguanen.workers.dev',
         docId: room,
         dbName: `YoinReactDB-${room}`,
         awarenessThrottleMs: 30,

@@ -69,8 +69,15 @@ export class YoinClient {
         this.schemas = config.schemas;
 
         // 將 docId 轉化為房間 URL
+        // 支援兩種格式：
+        //   路徑式 (Cloudflare Workers): wss://worker.dev → wss://worker.dev/room/{docId}
+        //   查詢式 (Legacy server.js):   如果 URL 已包含路徑則使用 ?room= 參數
         const roomUrl = new URL(config.url);
-        roomUrl.searchParams.append('room', config.docId);
+        if (roomUrl.pathname === '/' || roomUrl.pathname === '') {
+            roomUrl.pathname = `/room/${encodeURIComponent(config.docId)}`;
+        } else {
+            roomUrl.searchParams.append('room', config.docId);
+        }
 
         this.network = new NetworkProvider(
             roomUrl.toString(),

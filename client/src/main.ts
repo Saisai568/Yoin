@@ -1,13 +1,13 @@
 // client/src/main.ts
-import { initYoin, YoinClient, initPanicHook, createUndoPlugin, createDbPlugin } from './yoin';
+import { initYoin, YoinClient, initPanicHook } from './yoin';
+import { createUndoPlugin } from './yoin/undo';
+import { createDbPlugin } from './yoin/db';
+import { createLoggerPlugin } from './yoin/logger';
+import { createMapProxy, createArrayProxy } from './yoin/proxy';
 import { createDefaultCursor, createEmojiCursor, createAvatar } from './renderers';
 import type { CursorRenderer, AwarenessState } from './yoin/types';
-import './style.css';
 import { z } from 'zod';
-import { createMapProxy, createArrayProxy } from './yoin/proxy';
-import { createLoggerPlugin } from './yoin/logger';
-
-
+import './style.css';
 
 // ==========================================
 // Tool function log: output to the page and console at the same time
@@ -40,8 +40,7 @@ async function bootstrap() {
     // Micro-kernel: 建立輕量核心
     // ==========================================
     const client = new YoinClient({
-        url: 'ws://localhost:8080',
-        dbName: `YoinDemoDB-${currentRoom}`,
+        url: 'wss://yoin-worker.saiguanen.workers.dev', // 請確認你的 Worker 網址
         docId: currentRoom,
         awarenessThrottleMs: 30,
         heartbeatIntervalMs: 5000,
@@ -51,8 +50,9 @@ async function bootstrap() {
         schemas: {
             'app-settings': z.object({
                 themeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "顏色必須是 Hex 格式 (例如 #ff0000)"),
-                lastUpdatedBy: z.string().optional()
-            }),
+                lastUpdatedBy: z.string().optional(),
+                // 允許任意額外屬性以支援 Deep Proxy 測試 (如 ui.sidebar)
+            }).passthrough(), 
             'action-logs': z.array(z.object({
                 action: z.string(),
                 time: z.string()
@@ -63,19 +63,26 @@ async function bootstrap() {
     // ==========================================
     // Micro-kernel: 掛載插件
     // ==========================================
-    const { undo, redo, plugin: undoPlugin } = createUndoPlugin();
-    const { plugin: dbPlugin } = createDbPlugin({
+    // 注意：undoPlugin 必須在 dbPlugin 之後掛載，或者根據依賴關係調整
+    // 這裡我們示範標準順序：DB -> Undo -> Logger
+    
+    const dbPlugin = createDbPlugin({
         dbName: `YoinDemoDB-${currentRoom}`,
         debounceMs: 1000,
     });
+    
+    const undoPlugin = createUndoPlugin({
+        captureTimeout: 500
+    });
 
     client
-        .use(dbPlugin)    // 1. IndexedDB 持久化 (先掛載，以便載入歷史資料)
+        .use(dbPlugin)    // 1. IndexedDB 持久化
         .use(undoPlugin)  // 2. Undo/Redo 能力
         .use(createLoggerPlugin()); // 3. Logger 插件
 
-    log('🔌 Plugins installed: yoin-db, yoin-undo');
+    log('🔌 Plugins installed: yoin-db, yoin-undo, logger');
 
+    // 方便除錯
     (window as any).client = client;
     console.log("✅ Yoin Client has been mounted to window.client for debugging");
 
@@ -95,11 +102,16 @@ async function bootstrap() {
     // ==========================================
     // 3. Mouse Input Throttled by rAF (Performance: Input)
     // ==========================================
+    
+    // [New] 判斷裝置類型
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
     let pendingCursor: { x: number; y: number } | null = null;
     let rafScheduled = false;
 
-    window.addEventListener('mousemove', (e) => {
-        pendingCursor = { x: e.clientX, y: e.clientY };
+    // 定義廣播位置的函式
+    const updateCursor = (x: number, y: number) => {
+        pendingCursor = { x, y };
         if (!rafScheduled) {
             rafScheduled = true;
             requestAnimationFrame(() => {
@@ -107,17 +119,43 @@ async function bootstrap() {
                     client.setAwareness({
                         cursorX: pendingCursor.x,
                         cursorY: pendingCursor.y,
+                        device: isMobile ? 'mobile' : 'desktop',
+                        lastActive: Date.now() // 用於判斷是否為「幽靈」
                     });
                     pendingCursor = null;
                 }
                 rafScheduled = false;
             });
         }
+    };
+
+    // 綁定 Desktop 事件 (滑鼠)
+    window.addEventListener('mousemove', (e) => {
+        if (!isMobile) {
+            updateCursor(e.clientX, e.clientY);
+        }
     });
+
+    // 綁定 Mobile 事件 (觸控)
+    window.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 0) {
+            const touch = e.touches[0];
+            updateCursor(touch.clientX, touch.clientY);
+        }
+    }, { passive: true });
+
+    // Mobile 點擊時也更新一下
+    window.addEventListener('touchstart', (e) => {
+        if (e.touches.length > 0) {
+            const touch = e.touches[0];
+            updateCursor(touch.clientX, touch.clientY);
+        }
+    }, { passive: true });
 
     document.addEventListener('mouseleave', () => {
         pendingCursor = null;
-        client.setAwareness({ cursorX: null, cursorY: null });
+        // 離開視窗時，可以選擇清除座標或標記離線
+        // client.setAwareness({ cursorX: null, cursorY: null });
     });
 
     // ==========================================
@@ -150,25 +188,32 @@ async function bootstrap() {
     // ==========================================
 
     // 建立游標專用全螢幕圖層
-    const cursorLayer = document.createElement('div');
-    cursorLayer.id = 'cursor-layer';
-    cursorLayer.style.cssText = `
-        position: fixed;
-        top: 0; left: 0;
-        width: 100vw; height: 100vh;
-        pointer-events: none;
-        z-index: 9999;
-    `;
-    document.body.appendChild(cursorLayer);
+    let cursorLayer = document.getElementById('cursor-layer');
+    if (!cursorLayer) {
+        cursorLayer = document.createElement('div');
+        cursorLayer.id = 'cursor-layer';
+        cursorLayer.style.cssText = `
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            pointer-events: none;
+            z-index: 9999;
+            overflow: hidden;
+        `;
+        document.body.appendChild(cursorLayer);
+    }
 
     client.onAwarenessChange((states: Map<string, AwarenessState>) => {
+        const now = Date.now();
+
         // --- A. 更新右上角頭像列表 ---
         const avatarContainer = document.getElementById('awareness-container');
         if (avatarContainer) {
             avatarContainer.innerHTML = '<span style="font-size: 0.9rem; color: #666; margin-right: 5px;">在線成員:</span>';
             states.forEach((state, clientId) => {
                 const isSelf = clientId === myClientId;
-                const avatar = createAvatar(state.name, state.color, isSelf, clientId);
+                // 這裡假設 createAvatar 已經適配新的 state 結構
+                const avatar = createAvatar(state.name || 'User', state.color || '#ccc', isSelf, clientId);
                 avatarContainer.appendChild(avatar);
             });
         }
@@ -178,19 +223,49 @@ async function bootstrap() {
         const activeIds = new Set<string>();
 
         states.forEach((state, clientId) => {
-            // 跳過自己 & 沒有座標的用戶
-            if (clientId === myClientId || state.cursorX == null || state.cursorY == null) return;
+            // 跳過自己
+            if (clientId === myClientId) return;
+            
+            // [關鍵修復] 過濾幽靈：超過 5 秒沒更新的座標不顯示
+            if (state.lastActive && (now - state.lastActive > 5000)) {
+                return;
+            }
+
+            // 跳過沒有座標的用戶
+            if (state.cursorX == null || state.cursorY == null) return;
+            
             activeIds.add(clientId);
 
             let el = cursorElements.get(clientId);
 
             if (!el) {
                 // 🆕 新使用者 → 建立游標 DOM 並加入圖層
-                el = currentRenderer(state.color, state.name);
+                // 如果是 Mobile，我們手動覆蓋 renderer 或者在 renderer 內部判斷
+                // 這裡簡單示範：如果是 Mobile，使用圓點樣式
+                if (state.device === 'mobile') {
+                    el = document.createElement('div');
+                    el.style.cssText = `
+                        position: absolute; width: 12px; height: 12px; border-radius: 50%;
+                        background-color: ${state.color}; border: 2px solid white;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                        transition: transform 100ms linear;
+                    `;
+                    // 加上名稱標籤
+                    const label = document.createElement('div');
+                    label.innerText = state.name || 'User';
+                    label.style.cssText = `
+                        position: absolute; left: 16px; top: -4px;
+                        background: ${state.color}; color: #fff;
+                        padding: 2px 6px; border-radius: 4px; font-size: 10px; white-space: nowrap;
+                    `;
+                    el.appendChild(label);
+                } else {
+                    el = currentRenderer(state.color || '#000', state.name || 'User');
+                    el.style.transition = 'transform 100ms linear';
+                }
+                
                 el.id = `cursor-${clientId}`;
-                // 🎯 CSS transition 實現硬體加速的平滑移動
-                el.style.transition = 'transform 100ms linear';
-                cursorLayer.appendChild(el);
+                cursorLayer!.appendChild(el);
                 cursorElements.set(clientId, el);
             }
 
@@ -207,7 +282,6 @@ async function bootstrap() {
         }
 
         // --- C. 白板物件選取邊框 (Selection Awareness) ---
-        // 先清除所有選取邊框
         document.querySelectorAll('.shape').forEach(shape => {
             (shape as HTMLElement).style.border = '';
         });
@@ -220,8 +294,6 @@ async function bootstrap() {
             }
         });
     });
-
-    document.getElementById('connection-status')!.innerText = ' 連線中...';
 
     // ==========================================
     // 6. CRDT 資料訂閱 (Text / Map / Array)
@@ -243,6 +315,10 @@ async function bootstrap() {
                     appContainer.style.transition = 'border-color 0.3s ease';
                 }
                 mapDisplay.style.borderLeft = `8px solid ${mapData.themeColor}`;
+                
+                // [Test Case 3: Map Undo/Redo - Sync Background]
+                // 為了演示效果，我們也同步 body 背景色
+                // document.body.style.backgroundColor = mapData.themeColor;
             }
         }
 
@@ -256,7 +332,16 @@ async function bootstrap() {
             } else {
                 arrayData.forEach(item => {
                     const li = document.createElement('li');
-                    li.innerText = typeof item === 'object' ? JSON.stringify(item) : item;
+                    // 處理可能已經是物件的 item (如果我們在 client 做了 JSON.parse)
+                    // 或者還是 JSON 字串的 item
+                    let content = item;
+                    if (typeof item === 'string') {
+                         try { content = JSON.parse(item); } catch {}
+                    }
+                    
+                    li.innerText = typeof content === 'object' ? 
+                        `[${content.time}] ${content.action}` : String(content);
+                        
                     arrayDisplay.appendChild(li);
                 });
             }
@@ -285,7 +370,7 @@ async function bootstrap() {
         };
     }
 
-    // 隨機切換主題顏色
+    // 隨機切換主題顏色 (寫入 'app-settings')
     const btnUpdateMap = document.getElementById('btn-update-map');
     if (btnUpdateMap) {
         btnUpdateMap.onclick = () => {
@@ -322,7 +407,7 @@ async function bootstrap() {
             statusEl.className = 'status-indicator';
             statusEl.style.color = '#f39c12';
         } else {
-            statusEl.innerText = '🔴 Offline (Reconnecting)...)';
+            statusEl.innerText = '🔴 Offline (Reconnecting...)';
             statusEl.className = 'status-indicator offline';
         }
     });
@@ -331,7 +416,7 @@ async function bootstrap() {
     // 9. 清理：離開時通知
     // ==========================================
     window.addEventListener('beforeunload', () => {
-        client.leaveAwareness();
+        client.destroy(); // 使用 destroy 來清理 heartbeat 和 awareness
     });
 
     // ==========================================
@@ -344,70 +429,36 @@ async function bootstrap() {
         });
     });
 
-    // ... inside bootstrap() function ...
-
     // ==========================================
-    // Undo / Redo Buttons
+    // Undo / Redo Buttons & Shortcuts
     // ==========================================
     const btnUndo = document.getElementById('btn-undo');
     if (btnUndo) {
-        btnUndo.onclick = () => undo();  // 使用插件的 undo()
+        btnUndo.onclick = () => undoPlugin.undo(); // 使用插件的 undo()
     }
 
     const btnRedo = document.getElementById('btn-redo');
     if (btnRedo) {
-        btnRedo.onclick = () => redo();  // 使用插件的 redo()
+        btnRedo.onclick = () => undoPlugin.redo(); // 使用插件的 redo()
     }
     
     // Keyboard shortcuts (Ctrl+Z / Ctrl+Y)
     window.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
             e.preventDefault();
-            undo();
+            undoPlugin.undo();
         }
         if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
             e.preventDefault();
-            redo();
-        }
-    });
-    
-    // ==========================================
-    // 🎨 Test Case 3: Map Undo/Redo (Theme Color)
-    // ==========================================
-    
-    // 1. 綁定按鈕事件 (寫入 Map)
-    const btnTheme = document.getElementById('btn-theme');
-    if (btnTheme) {
-        btnTheme.onclick = () => {
-            const colors = ['#dfe6e9', '#ffeaa7', '#81ecec', '#fab1a0', '#74b9ff', '#a29bfe'];
-            const randomColor = colors[Math.floor(Math.random() * colors.length)];
-            
-            console.log(`[UI] Setting theme color to: ${randomColor}`);
-            // "config" 是 map 名稱, "bg" 是 key
-            client.setMap('config', 'bg', randomColor);
-        };
-    }
-
-    // 2. 修改 Subscribe 邏輯 (監聽 Map 變更並渲染)
-    // 注意：原本的 subscribe 可能只單純更新文字，我們需要擴充它
-    client.subscribe((text) => {
-        // A. 更新文字框 (既有邏輯)
-        const display = document.getElementById('display'); // 假設你有個顯示文字的地方
-        if (display) (display as HTMLTextAreaElement).value = text;
-
-        // B. 更新背景色 (Map 邏輯)
-        const config = client.getMap('config');
-        if (config.bg) {
-            document.body.style.backgroundColor = config.bg;
-            document.body.style.transition = 'background-color 0.3s ease';
+            undoPlugin.redo();
         }
     });
 
     // ==========================================
-    // 🔮 Test Case 4: Proxy Transparency
+    // 🔮 Test Case 4: Proxy Transparency (Deep Proxy)
     // ==========================================
     
-    // 定義我們預期的設定型別 (搭配 TypeScript 會有很好的自動補全)
+    // 定義 App 設定型別
     type AppSettings = {
         themeColor: string;
         lastUpdatedBy?: string;
@@ -419,56 +470,53 @@ async function bootstrap() {
         }
     };
 
-    // 1. 建立 Proxy 實例
-    // 這行程式碼建立了 'app-settings' Map 的代理物件
+    // 1. 建立 'app-settings' 的 Proxy
     const settingsStore = createMapProxy<AppSettings>(client, 'app-settings');
-    // 2. 綁定一個新按鈕來測試 Proxy
-    // 請在 HTML 加入 <button id="btn-proxy-test">🔮 Test Proxy</button>
+
+    // 2. 建立 'action-logs' 的 Array Proxy
+    // 定義 Log Item 型別
+    interface ActionLog {
+        action: string;
+        time: string;
+    }
+    const logsStore = createArrayProxy<ActionLog>(client, 'action-logs');
+
+    // 3. 綁定測試按鈕
     const btnProxyTest = document.getElementById('btn-proxy-test');
     
     if (btnProxyTest) {
         btnProxyTest.onclick = () => {
             console.log("🔮 [Proxy Test] Executing transparent updates...");
             
-            // A. 測試根屬性寫入 (自動轉為 setMap)
-            // 應該會觸發 Zod 驗證 (因為底層還是呼叫 setMap)
-            settingsStore.themeColor = '#fd79a8'; 
-            settingsStore.lastUpdatedBy = 'Proxy_User';
-
-            // B. 測試深層巢狀寫入 (自動轉為 setMapDeep)
-            // 注意：我們不需要先建立 ui 物件，直接寫入即可！
-            // 這會轉為 map_set_deep('app-settings', ['ui', 'sidebar', 'width'], 350)
-            if (settingsStore.ui && settingsStore.ui.sidebar) {
-                settingsStore.ui.sidebar.width = Math.floor(Math.random() * 500);
-                settingsStore.ui.sidebar.collapsed = false;
-            }
-            // 這裡為了方便 TS 檢查，實際上你可以直接寫:
-            // (settingsStore as any).ui.sidebar.width = 350;
-        };
-    }
-
-    // ==========================================
-    // 🔮 Test Case 5: Array Proxy (push)
-    // ==========================================
-    
-    // 1. 建立 'action-logs' 的 Array Proxy
-    const logsStore = createArrayProxy<any>(client, 'action-logs');
-    // 2. 綁定按鈕 (重複利用 Test Proxy 按鈕，或新增一個)
-    // 為了方便，我們把測試邏輯加到剛剛的 'btn-proxy-test' 裡面
-    if (btnProxyTest) {
-        // 保存原本的 onclick
-        const prevOnClick = btnProxyTest.onclick;
-        
-        btnProxyTest.onclick = (e) => {
-            // 執行原本的 Map Proxy 測試
-            if (typeof prevOnClick === 'function') prevOnClick.call(btnProxyTest, e);
-
-            console.log("🔮 [Proxy Test] Testing Array Push...");
-            
-            // 測試 Array Push 語法糖
-            // 這應該會自動觸發 client.pushArray('action-logs', {...})
-            // 並且經過 Zod 驗證 (必須包含 action 和 time)
+            // --- Test A: Map Proxy ---
             try {
+                // 自動轉為 client.setMap()
+                settingsStore.themeColor = '#fd79a8'; 
+                settingsStore.lastUpdatedBy = 'Proxy_User';
+
+                // Deep Proxy: 自動轉為 client.setMapDeep()
+                // 注意：必須在 schema 中允許額外屬性 (.passthrough())，否則會被 Zod 擋下
+                if (!settingsStore.ui) {
+                     // 這裡我們模擬建立結構，但在 Yoin Proxy 中，
+                     // 我們可以直接對路徑賦值 (如果你的 Proxy 實作支援自動建立路徑)
+                     // 為了安全起見，我們先用 setMap 建立第一層
+                     // client.setMap('app-settings', 'ui', {}); 
+                     // 或者直接用 Proxy 嘗試寫入 (視 createDeepProxy 實作而定)
+                }
+                
+                // 假設 Proxy 支援深層寫入
+                if (settingsStore.ui?.sidebar) {
+                    settingsStore.ui.sidebar.width = Math.floor(Math.random() * 500);
+                    settingsStore.ui.sidebar.collapsed = false;
+                }
+            } catch (e) {
+                console.error("Proxy Map Error:", e);
+            }
+
+            // --- Test B: Array Proxy ---
+            console.log("🔮 [Proxy Test] Testing Array Push...");
+            try {
+                // 自動轉為 client.pushArray()
                 logsStore.push({
                     action: 'PROXY_PUSH',
                     time: new Date().toLocaleTimeString()
