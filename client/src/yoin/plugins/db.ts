@@ -1,13 +1,13 @@
 // client/src/yoin/plugins/db.ts
 // ============================================================
-// @yoin/db — IndexedDB 持久化插件
+// @yoin/db — IndexedDB Persistence Plugin
 // ============================================================
 //
-// 將 StorageAdapter + scheduleSave 邏輯從 YoinClient 完全抽離。
-// 透過 onInstall 掛載到核心，並監聽 client.onDocUpdate 來自動
-// 執行防抖存檔 (debounced save)。
+// Completely separate the StorageAdapter + scheduleSave logic from YoinClient.
+// Mount it to the core via onInstall, and listen to client.onDocUpdate to automatically
+// perform a debounced save.
 //
-// 同時在安裝時自動執行 loadFromDisk()，從 IndexedDB 還原資料。
+// Also automatically run loadFromDisk() upon installation to restore data from IndexedDB.
 // ============================================================
 
 import type { YoinPlugin } from '../plugin';
@@ -15,9 +15,9 @@ import type { YoinClient } from '../YoinClient';
 import { StorageAdapter } from '../storage';
 
 export interface YoinDbPluginOptions {
-    /** IndexedDB 資料庫名稱 */
+    /** IndexedDB Name */
     dbName: string;
-    /** 防抖存檔延遲 (ms)，預設 1000 */
+    /** Debounce save delay (ms), default 1000*/
     debounceMs?: number;
 }
 
@@ -42,10 +42,10 @@ export class YoinDbPlugin implements YoinPlugin {
     onInstall(client: YoinClient): void {
         this.client = client;
 
-        // 1. 載入磁碟快照
+        // 1. Load disk snapshot
         this.loadFromDisk();
 
-        // 2. 監聽所有文件更新 → 自動防抖存檔
+        // 2. Monitor all file updates → Auto-debounce save
         this.unsubDocUpdate = client.onDocUpdate(() => {
             this.scheduleSave();
         });
@@ -58,8 +58,8 @@ export class YoinDbPlugin implements YoinPlugin {
     // ==========================================
 
     /**
-     * onAfterUpdate — 任何更新套用後也觸發存檔排程
-     * 這確保即使透過 plugin 生命週期進來的更新也會被持久化
+     * onAfterUpdate — Triggers the save schedule after any update is applied
+     * This ensures that updates coming through the plugin lifecycle are also persisted
      */
     onAfterUpdate(_update: Uint8Array): void {
         this.scheduleSave();
@@ -76,7 +76,7 @@ export class YoinDbPlugin implements YoinPlugin {
     // ==========================================
 
     /**
-     * 手動觸發立即存檔 (跳過防抖)
+     *Manually trigger save immediately (bypass debounce)
      */
     public async forceSave(): Promise<void> {
         if (this.saveTimeout) clearTimeout(this.saveTimeout);
@@ -108,8 +108,8 @@ export class YoinDbPlugin implements YoinPlugin {
     }
 
     /**
-     * 防抖存檔：每次呼叫時重置計時器，
-     * 只有在最後一次呼叫後 debounceMs 毫秒才真正執行存檔
+     * Debounce save: reset the timer each time it is called
+     * The save will only actually execute debounceMs milliseconds after the last call.
      */
     private scheduleSave(): void {
         if (this.saveTimeout) {
@@ -123,25 +123,18 @@ export class YoinDbPlugin implements YoinPlugin {
     }
 }
 
-// ============================================================
-// 組合式函式風格
-// ============================================================
-
 /**
- * 建立 IndexedDB 持久化插件
+ * Create an IndexedDB persistence plugin
  *
  * @example
  * const { plugin, forceSave } = createDbPlugin({ dbName: 'myDB' });
  * client.use(plugin);
- * // 需要時可手動觸發存檔
  * await forceSave();
  */
 export function createDbPlugin(options: YoinDbPluginOptions) {
     const instance = new YoinDbPlugin(options);
     return {
-        /** 插件實例，傳入 client.use() */
         plugin: instance,
-        /** 手動觸發立即存檔 */
         forceSave: () => instance.forceSave(),
     };
 }

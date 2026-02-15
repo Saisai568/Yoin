@@ -1,6 +1,6 @@
 // client/src/yoin/plugins/index.ts
 // ============================================================
-// Plugin 統一匯出
+// Unified export of plugins
 // ============================================================
 export { YoinUndoPlugin, createUndoPlugin } from './undo';
 export { YoinDbPlugin, createDbPlugin } from './db';

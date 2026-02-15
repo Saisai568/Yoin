@@ -3,45 +3,45 @@
 // Micro-kernel Plugin Interface
 // ============================================================
 //
-// 所有 Yoin 擴充功能（Undo、IndexedDB、Schema Validation…）
-// 都透過此介面掛載到輕量化的 YoinClient 核心上。
+// All Yoin extensions (Undo, IndexedDB, Schema Validation, etc.) 
+// are mounted onto the lightweight YoinClient core through this interface.
 // ============================================================
 
 import type { YoinClient } from './YoinClient';
 
 /**
- * YoinPlugin 生命週期介面
+ * YoinPlugin Lifecycle interface
  *
- * onInstall   — 插件被 `.use()` 註冊時觸發，用於初始化內部狀態並綁定事件
- * onBeforeUpdate — 本地資料變更「即將」被廣播前觸發（可攔截 / 記錄）
- * onAfterUpdate  — 任何文件更新（本地或遠端）套用後觸發
- * onDestroy      — Client 銷毀時觸發，用於清理計時器與資源
+ * onInstall   — Triggered when the plugin is registered with `.use()`, used to initialize internal states and bind events.
+ * onBeforeUpdate — Triggered before local data changes are "about to" be broadcasted (can be intercepted / logged)
+ * onAfterUpdate — Triggered after any document update (local or remote) is applied
+ * onDestroy      — Client Triggered upon destruction, used to clean up timers and resources
  */
 export interface YoinPlugin {
-    /** 插件名稱（用於除錯與日誌） */
+    /** Plugin Name (for debugging and logging)） */
     readonly name: string;
 
     /**
-     * 插件安裝勾子
-     * 在 `client.use(plugin)` 時被呼叫
-     * @param client — YoinClient 實例，可存取公開 API 與內部勾子
+     * Plugin installation hook
+     * Called when `client.use(plugin)` is executed
+     * @param client — YoinClient instance, providing access to the public API and internal hooks
      */
     onInstall(client: YoinClient): void;
 
     /**
-     * 本地變更即將被廣播前呼叫
-     * @param update — 即將廣播的 delta update (Uint8Array)
+     * Called before a terrain change is about to be broadcast
+     * @param update — the delta update (Uint8Array) that is about to be broadcast
      */
     onBeforeUpdate?(update: Uint8Array): void;
 
     /**
-     * 任何文件更新（本地 or 遠端）套用後呼叫
-     * @param update — 已套用的 update (Uint8Array)
+     * Called after any file update (local or remote) is applied
+     * @param update — the applied update (Uint8Array)
      */
     onAfterUpdate?(update: Uint8Array): void;
 
     /**
-     * Client 銷毀時呼叫，用於清理資源
+     * Called when the client is destroyed, used to clean up resources
      */
     onDestroy?(): void;
 }

@@ -1,6 +1,6 @@
 // client/src/yoin/index.ts
 // ============================================================
-// Yoin Micro-kernel 公開 API
+// Yoin Micro-kernel Public API
 // ============================================================
 import initWasm, { YoinDoc, init_panic_hook } from '../../../core/pkg-web/core'; 
 

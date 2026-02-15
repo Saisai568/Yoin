@@ -43,8 +43,10 @@ export function useYoinMap<T extends object>(mapName: string): T {
     // 注意：為了效能，通常這裡應該回傳 immutable 的副本，但因為我們有 Proxy，
     // 我們回傳 Proxy 實例讓使用者可以直接讀取最新值
     const getSnapshot = () => {
-        // 這裡回傳 JSON 字串作為比對依據，避免 React 進入無限迴圈
-        return client.map_get_all(mapName); 
+        // Serialize to JSON string for React equality comparison (useSyncExternalStore)
+        // map_get_all now returns a native JS object, so we stringify for stable comparison
+        const data = client.map_get_all(mapName);
+        return JSON.stringify(data ?? {}); 
     };
 
     // C. 觸發 React 更新
@@ -71,8 +73,10 @@ export function useYoinArray<T>(arrayName: string): T[] {
     }, [client]);
 
     const getSnapshot = () => {
-        // 序列化以進行變更偵測
-        return client.array_get_all(arrayName);
+        // Serialize to JSON string for React equality comparison
+        // array_get_all now returns a native JS array, so we stringify for stable comparison
+        const data = client.array_get_all(arrayName);
+        return JSON.stringify(data ?? []);
     };
 
     useSyncExternalStore(subscribe, getSnapshot);

@@ -1,6 +1,6 @@
 // client/src/yoin/YoinClient.ts
 // ============================================================
-// Micro-kernel Core — 僅保留 CRDT Doc、Networking、Map/Array API
+// Micro-kernel Core — Only keep CRDT Doc, Networking, Map/Array API
 // ============================================================
 import { YoinDoc } from '../../../core/pkg-web/core';
 import { NetworkProvider } from './network';
@@ -9,7 +9,7 @@ import type { YoinConfig, AwarenessState, AwarenessPartial, AwarenessCallback, N
 import { z } from 'zod';
 
 // ============================================================
-// 通訊協議常數
+// Communication protocol constants
 // ============================================================
 const MSG_SYNC_STEP_1 = 0;
 const MSG_SYNC_STEP_2 = 1;
@@ -25,42 +25,42 @@ export class YoinClient {
     public network: NetworkProvider; // Public for debugging/hooks
     private config: YoinConfig;
 
-    // CRDT 文字訂閱者 (React/UI)
+    // CRDT Text Subscriber (React/UI)
     private listeners: ((text: string) => void)[] = [];
 
-    // Schema 驗證規則
+    // Schema Validation Rules
     private schemas: Record<string, z.ZodTypeAny> | undefined;
 
     // ==========================================
-    // Plugin 系統
+    // Plugin system
     // ==========================================
     private plugins: YoinPlugin[] = [];
 
     // ==========================================
-    // 文件更新勾子 (供插件訂閱)
+    // File update hooks (for plugin subscription)
     // ==========================================
     private docUpdateListeners: ((update: Uint8Array) => void)[] = [];
     private localUpdateListeners: ((update: Uint8Array) => void)[] = [];
 
     // ==========================================
-    // Awareness 系統屬性
+    // Awareness System Properties
     // ==========================================
     private myClientId = Math.random().toString(36).substring(2, 10);
     private awarenessStates: Map<string, AwarenessState> = new Map();
     private awarenessListeners: AwarenessCallback[] = [];
 
-    // Throttle 機制
+    // Throttle Mechanism
     private awarenessTimeout: number | undefined;
     private pendingAwarenessUpdate: boolean = false;
 
-    // Heartbeat 計時器
+    // Heartbeat Timer
     private heartbeatTimer: number | undefined;
     private gcTimer: number | undefined;
 
     private networkListeners: ((status: NetworkStatus) => void)[] = [];
 
     // ==========================================
-    // Constructor (輕量化 — 不再包含 Storage / Undo)
+    // Constructor (Lightweight Initialization)
     // ==========================================
     constructor(config: YoinConfig) {
         this.config = config;
@@ -68,10 +68,10 @@ export class YoinClient {
         this.doc = new YoinDoc();
         this.schemas = config.schemas;
 
-        // 將 docId 轉化為房間 URL
-        // 支援兩種格式：
-        //   路徑式 (Cloudflare Workers): wss://worker.dev → wss://worker.dev/room/{docId}
-        //   查詢式 (Legacy server.js):   如果 URL 已包含路徑則使用 ?room= 參數
+        // Convert docId into a room URL
+        // Supports two formats:
+        //   Path style (Cloudflare Workers): wss://worker.dev → wss://worker.dev/room/{docId}
+        //   Query style (Legacy server.js):   if the URL already has a path, use the ?room= parameter
         const roomUrl = new URL(config.url);
         if (roomUrl.pathname === '/' || roomUrl.pathname === '') {
             roomUrl.pathname = `/room/${encodeURIComponent(config.docId)}`;
@@ -82,24 +82,19 @@ export class YoinClient {
         this.network = new NetworkProvider(
             roomUrl.toString(),
 
-            // 事件 1：連線成功
+            // Event 1: Connection Successful
             () => {
-                // 1. Join Room
                 const roomNameBytes = new TextEncoder().encode(this.config.docId);
                 this.network.broadcast(this.encodeMessage(MSG_JOIN_ROOM, roomNameBytes));
                 console.log(`🚪 [Network] Joining room: ${this.config.docId}`);
-
-                // 2. Start Sync
                 const sv = this.doc.get_state_vector();
                 this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1, sv));
                 console.log("🔄 [Sync] Sent initial State Vector");
-
-                // 3. Sync Awareness
                 const myState = this.awarenessStates.get(this.myClientId);
                 if (myState) this.setAwareness({});
             },
 
-            // 事件 2：收到網路訊息
+            // Event 2: Received an online message
             async (rawMsg: Uint8Array) => {
                 const type = rawMsg[0];
                 const payload = rawMsg.slice(1);
@@ -125,14 +120,8 @@ export class YoinClient {
 
                     case MSG_SYNC_STEP_2: {
                         this.doc.apply_update(payload);
-                        
-                        // 1. 通知 UI (React)
                         this.notifyListeners();
-                        
-                        // 2. 觸發插件 onAfterUpdate (遠端更新)
                         this.plugins.forEach(p => p.onAfterUpdate?.(payload));
-                        
-                        // 3. 觸發內部 Hook (DB Plugin 使用)
                         this.emitDocUpdate(payload);
                         break;
                     }
@@ -148,14 +137,14 @@ export class YoinClient {
                             }
                             this.notifyAwarenessListeners();
                         } catch (e) {
-                            console.error("[Awareness] 解析封包失敗", e);
+                            console.error("[Awareness] Failed to parse packet", e);
                         }
                         break;
                     }
                 }
             },
 
-            // 事件 3：網路狀態變更
+            // Event 3: Network Status Change
             (status) => {
                 this.notifyNetworkListeners(status);
             }
@@ -169,9 +158,9 @@ export class YoinClient {
     // ==========================================
 
     /**
-     * 註冊插件到核心
-     * 支援鏈式呼叫：client.use(undoPlugin).use(dbPlugin)
-     */
+         * Register the plugin to the core
+         * Supports chained calls: client.use(undoPlugin).use(dbPlugin)
+         */
     public use(plugin: YoinPlugin): this {
         this.plugins.push(plugin);
         plugin.onInstall(this);
@@ -180,12 +169,12 @@ export class YoinClient {
     }
 
     // ==========================================
-    // 內部勾子 API (供插件訂閱)
+    // Internal Hook API (for plugin subscription)
     // ==========================================
 
     /**
-     * 訂閱所有文件更新 (本地 + 遠端)
-     * 適用場景：IndexedDB 持久化
+     * Subscribe to all document updates (local + remote)
+     * Use case: IndexedDB persistence
      */
     public onDocUpdate(callback: (update: Uint8Array) => void): () => void {
         this.docUpdateListeners.push(callback);
@@ -196,8 +185,8 @@ export class YoinClient {
     }
 
     /**
-     * 訂閱本地更新 (僅本端產生的 delta)
-     * 適用場景：Undo 堆疊追蹤
+     * Subscribe to local updates (only deltas generated by this client)
+     * Use case: Undo stack tracking
      */
     public onLocalUpdate(callback: (update: Uint8Array) => void): () => void {
         this.localUpdateListeners.push(callback);
@@ -207,19 +196,20 @@ export class YoinClient {
         };
     }
 
-    /** 取得內部 WASM Doc 參照 (供進階插件使用) */
+    /** 
+     * Get internal WASM Doc reference (for advanced plugin use) */
     public getDoc(): YoinDoc {
         return this.doc;
     }
 
-    /** 取得設定 */
+    /** Get Settings */
     public getConfig(): YoinConfig {
         return this.config;
     }
 
     /**
-     * 編碼並廣播一個 SYNC_STEP_2 更新
-     * 供插件（如 UndoPlugin）在執行 undo/redo 後廣播變更
+     * Encode and broadcast a SYNC_STEP_2 update
+     * For plugins (such as UndoPlugin) to broadcast changes after performing undo/redo operations on the internal Doc
      */
     public broadcastUpdate(update: Uint8Array): void {
         const msg = this.encodeMessage(MSG_SYNC_STEP_2, update);
@@ -319,7 +309,7 @@ export class YoinClient {
                 if (now - state.timestamp > timeoutThreshold) {
                     this.awarenessStates.delete(clientId);
                     changed = true;
-                    console.log(`[Awareness] 👻 已清除離線用戶: ${state.name} (${clientId})`);
+                    console.log(`[Awareness] 👻 Offline users cleared: ${state.name} (${clientId})`);
                 }
             }
 
@@ -335,7 +325,6 @@ export class YoinClient {
         if (this.gcTimer) clearInterval(this.gcTimer);
         if (this.awarenessTimeout) clearTimeout(this.awarenessTimeout);
 
-        // 銷毀所有插件
         this.plugins.forEach(p => p.onDestroy?.());
 
         this.leaveAwareness();
@@ -362,12 +351,12 @@ export class YoinClient {
     // ==========================================
 
     public async insertText(index: number, text: string) {
-        const deltaUpdate = this.doc.insert_text("content", index, text);
+        const deltaUpdate = this.doc.insert_text("content", index, text) as Uint8Array;
         this.applyLocalUpdate(deltaUpdate);
     }
 
     public async deleteText(index: number, length: number) {
-        const deltaUpdate = this.doc.delete_text("content", index, length);
+        const deltaUpdate = this.doc.delete_text("content", index, length) as Uint8Array;
         this.applyLocalUpdate(deltaUpdate);
     }
 
@@ -397,38 +386,30 @@ export class YoinClient {
     public async setMap(mapName: string, key: string, value: any) {
         this.validateMap(mapName, key, value);
         
-        // [FIX] Double Serialization Prevention
-        // If it's already a string, pass it directly. Otherwise stringify.
         const valueStr = typeof value === 'string' ? value : JSON.stringify(value);
         
-        const deltaUpdate = this.doc.map_set(mapName, key, valueStr);
+        const deltaUpdate = this.doc.map_set(mapName, key, valueStr) as Uint8Array;
         this.applyLocalUpdate(deltaUpdate);
     }
 
     public getMap(mapName: string): Record<string, any> {
         try {
-            const jsonStr = this.doc.map_get_all(mapName);
-            if (!jsonStr || jsonStr === "{}") return {};
+            // map_get_all now returns a native JS object via serde-wasm-bindgen
+            const rawMap = this.doc.map_get_all(mapName) as Record<string, any> | null;
+            if (!rawMap || typeof rawMap !== 'object') return {};
 
-            const rawMap = JSON.parse(jsonStr);
             const result: Record<string, any> = {};
-
             for (const key in rawMap) {
-                try {
-                    // Try to parse, but if it fails (it's a raw string), use as is
-                    if (typeof rawMap[key] === 'string') {
-                         // Attempt parse to handle legacy JSON strings
-                        try {
-                            result[key] = JSON.parse(rawMap[key]);
-                        } catch {
-                            // If parse fails, it's a raw string (Correct behavior for strings now)
-                            result[key] = rawMap[key];
-                        }
-                    } else {
-                        result[key] = rawMap[key];
+                const val = rawMap[key];
+                // Try to parse JSON-encoded string values (backward compat with stored stringified objects)
+                if (typeof val === 'string') {
+                    try {
+                        result[key] = JSON.parse(val);
+                    } catch {
+                        result[key] = val;
                     }
-                } catch {
-                    result[key] = rawMap[key];
+                } else {
+                    result[key] = val;
                 }
             }
             return result;
@@ -440,13 +421,29 @@ export class YoinClient {
 
     public setMapDeep(mapName: string, path: string[], value: string | number | boolean) {
         try {
-            // [FIX] Double Serialization Prevention
-            const valueStr = typeof value === 'string' ? value : JSON.stringify(value);
-            
-            const deltaUpdate = this.doc.map_set_deep(mapName, path, valueStr) as Uint8Array;
+            // map_set_deep now accepts native JsValue, pass directly for primitives
+            const deltaUpdate = this.doc.map_set_deep(mapName, path, value) as Uint8Array;
             this.applyLocalUpdate(deltaUpdate);
         } catch (e) {
             console.error("[Yoin] Deep Set Error:", e);
+        }
+    }
+
+    /**
+     * Batch write: execute multiple map_set operations in a single CRDT transaction.
+     * This produces a single Update event and a single Undo step.
+     * @param entries Array of [mapName, key, value] triples
+     */
+    public batchSet(entries: [string, string, any][]) {
+        try {
+            const jsEntries = entries.map(([mapName, key, value]) => {
+                const v = typeof value === 'string' ? value : JSON.stringify(value);
+                return [mapName, key, v];
+            });
+            const deltaUpdate = this.doc.batch_set(jsEntries) as Uint8Array;
+            this.applyLocalUpdate(deltaUpdate);
+        } catch (e) {
+            console.error("[Yoin] Batch Set Error:", e);
         }
     }
 
@@ -460,28 +457,31 @@ export class YoinClient {
         // [FIX] Double Serialization Prevention
         const valueStr = typeof item === 'string' ? item : JSON.stringify(item);
         
-        const deltaUpdate = this.doc.array_push(arrayName, valueStr);
+        const deltaUpdate = this.doc.array_push(arrayName, valueStr) as Uint8Array;
         this.applyLocalUpdate(deltaUpdate);
     }
 
     public getArray(arrayName: string): any[] {
         try {
-            const jsonStr = this.doc.array_get_all(arrayName);
-            if (!jsonStr) return [];
+            // array_get_all now returns a native JS array via serde-wasm-bindgen
+            const rawArray = this.doc.array_get_all(arrayName) as any[] | null;
+            if (!rawArray || !Array.isArray(rawArray)) return [];
 
-            const rawArray: string[] = JSON.parse(jsonStr);
             return rawArray.map(item => {
-                try { return JSON.parse(item); }
-                catch { return item; } // Return raw string if parse fails
+                if (typeof item === 'string') {
+                    try { return JSON.parse(item); }
+                    catch { return item; }
+                }
+                return item;
             });
         } catch (error) {
-            console.warn(`[Yoin] 讀取 Array (${arrayName}) 失敗`, error);
+            console.warn(`[Yoin] Failed to read Array (${arrayName})`, error);
             return [];
         }
     }
 
     // ==========================================
-    // 公開 notifyListeners (供插件觸發 UI 更新)
+    // public notifyListeners (used by plugins to trigger UI updates)
     // ==========================================
 
     public notifyListeners() {
@@ -490,33 +490,28 @@ export class YoinClient {
     }
 
     // ==========================================
-    // 核心內部：統一的本地更新流程
+    // Core Internal: Unified Local Update Process
     // ==========================================
 
     /**
-     * 所有本地修改（insertText、setMap、pushArray…）的統一出口
+     * A unified exit for all local modifications (insert text, set map, push array…)
      */
     private applyLocalUpdate(deltaUpdate: Uint8Array) {
-        // 1. Plugin lifecycle: onBeforeUpdate (Local)
         this.plugins.forEach(p => p.onBeforeUpdate?.(deltaUpdate));
 
-        // 2. 廣播
         const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
         this.network.broadcast(msg);
 
-        // 3. 通知 UI
         this.notifyListeners();
 
-        // 4. Plugin lifecycle: onAfterUpdate (Local)
         this.plugins.forEach(p => p.onAfterUpdate?.(deltaUpdate));
 
-        // 5. 勾子事件
         this.emitLocalUpdate(deltaUpdate);
         this.emitDocUpdate(deltaUpdate);
     }
 
     // ==========================================
-    // 內部勾子觸發器
+    // Internal hook triggers for plugins
     // ==========================================
 
     private emitDocUpdate(update: Uint8Array) {
@@ -528,7 +523,7 @@ export class YoinClient {
     }
 
     // ==========================================
-    // 訊息編碼
+    // Message Encoding
     // ==========================================
 
     private encodeMessage(type: number, payload: Uint8Array): Uint8Array {
@@ -596,24 +591,24 @@ export class YoinClient {
     // ==========================================
 
     /**
-     * 取得 Map 的所有資料 (JSON String)
-     * 供 useYoinMap 的 getSnapshot 使用
+     * Obtain all data from the Map (JSON String)
+     * For use with useYoinMap's getSnapshot
      */
-    public map_get_all(mapName: string): string {
+    public map_get_all(mapName: string): any {
         return this.doc.map_get_all(mapName);
     }
 
     /**
-     * 取得 Array 的所有資料 (JSON String)
-     * 供 useYoinArray 的 getSnapshot 使用
+     * Obtain all data from the Array (native JS value)
+     * For use with useYoinArray's getSnapshot
      */
-    public array_get_all(arrayName: string): string {
+    public array_get_all(arrayName: string): any {
         return this.doc.array_get_all(arrayName);
     }
 
     /**
-     * 取得感知狀態 Map
-     * 供 useYoinAwareness 使用
+     * Obtain Awareness States Map
+     * For use with useYoinAwareness
      */
     public getAwarenessStates() {
         return this.awarenessStates;

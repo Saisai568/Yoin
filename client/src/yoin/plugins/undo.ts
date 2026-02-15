@@ -1,11 +1,11 @@
 // client/src/yoin/plugins/undo.ts
 // ============================================================
-// @yoin/undo — Undo/Redo 插件
+// @yoin/undo — Undo/Redo Plugin
 // ============================================================
 //
-// 將 UndoManager 邏輯從 YoinClient 核心完全抽離。
-// 透過 onInstall 掛載到核心，並利用 doc.undo() / doc.redo()
-// (Rust WASM) 執行操作，再透過 broadcastUpdate 廣播變更。
+// Completely separate the UndoManager logic from the core of YoinClient.
+// Mount it to the core via onInstall, and use doc.undo() / doc.redo()
+// (Rust WASM) to perform operations, then broadcast changes through broadcastUpdate.
 // ============================================================
 
 import type { YoinPlugin } from '../plugin';
@@ -33,18 +33,16 @@ export class YoinUndoPlugin implements YoinPlugin {
     // ==========================================
 
     /**
-     * 執行 Undo
-     * 呼叫 Rust WASM 的 undo()，取得反向 diff，
-     * 廣播給其他 Peers 並更新本地 UI。
+     * Execute Undo
+     * Call undo() from Rust WASM to get the reverse diff,
+     * Broadcast it to other peers and update the local UI.
      */
     public undo(): void {
         try {
             const diff = this.doc.undo();
 
             if (diff && diff.length > 0) {
-                // 1. 廣播 undo 的效果給其他 Peers
                 this.client.broadcastUpdate(diff);
-                // 2. 更新本地 UI
                 this.client.notifyListeners();
 
                 console.log('[YoinUndoPlugin] ↩️ Undo applied');
@@ -55,9 +53,9 @@ export class YoinUndoPlugin implements YoinPlugin {
     }
 
     /**
-     * 執行 Redo
-     * 呼叫 Rust WASM 的 redo()，取得正向 diff，
-     * 廣播給其他 Peers 並更新本地 UI。
+     * Execute Redo
+     * Call redo() from Rust WASM to get the forward diff,
+     * Broadcast it to other peers and update the local UI.
      */
     public redo(): void {
         try {
@@ -84,12 +82,12 @@ export class YoinUndoPlugin implements YoinPlugin {
 }
 
 // ============================================================
-// 組合式函式 (Composable Function) 風格的替代方案
+// Alternative to Composable Function Style
 // ============================================================
 
 /**
- * 建立 Undo/Redo 能力的組合式函式
- * 可以不需要 class，直接回傳 { undo, redo, plugin }
+ * Composable functions to build Undo/Redo capabilities
+* Can return { undo, redo, plugin } directly without needing a class
  *
  * @example
  * const { undo, redo, plugin } = createUndoPlugin();
@@ -99,11 +97,11 @@ export class YoinUndoPlugin implements YoinPlugin {
 export function createUndoPlugin() {
     const instance = new YoinUndoPlugin();
     return {
-        /** 插件實例，傳入 client.use() */
+        /** Plugin instance, passed into client.use() */
         plugin: instance,
-        /** 執行 Undo */
+
         undo: () => instance.undo(),
-        /** 執行 Redo */
+
         redo: () => instance.redo(),
     };
 }

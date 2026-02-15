@@ -1,67 +1,67 @@
 // client/src/yoin/types.ts
 // ============================================================
-// Layer 1: Interface — 定義 Yoin 2.0 感知系統的資料契約
+// Layer 1: Interface — Define the data contract for the Yoin perception system
 // ============================================================
 import { z } from 'zod';
 /**
- * YoinClient 初始化設定
+ * YoinClient initialization configuration
  */
 export interface YoinConfig {
     url: string;
-    /** IndexedDB 資料庫名稱 (已移至 DbPlugin，此處為向後相容保留) */
+    /** IndexedDB database name (moved to DbPlugin, kept for backward compatibility) */
     dbName?: string;
     docId: string;
-    /** Awareness 網路廣播的節流間隔 (ms)，預設 30 */
+    /** Throttle interval for Awareness network broadcasting (ms), default 30 */
     awarenessThrottleMs?: number;
-    /** Heartbeat 廣播間隔 (ms)，預設 5000 */
+    /** Heartbeat broadcast interval (ms), default 5000 */
     heartbeatIntervalMs?: number;
-    /** 判定離線的超時門檻 (ms)，預設 30000 */
+    /** Timeout threshold for offline detection (ms), default 30000 */
     heartbeatTimeoutMs?: number;
-    /** Schema 定義：Map 名稱 -> Zod Schema */
+    /** Schema definitions: Map name -> Zod Schema */
     schemas?: Record<string, z.ZodTypeAny>;
 }
 
 /**
- * 感知狀態：每個在線使用者的即時資訊
- * - clientId / timestamp 由系統自動填入，外部不需手動設定
- * - cursorX / cursorY 為 null 表示滑鼠離開畫面
+ * Perception status: real-time information for each online user
+ * - clientId / timestamp are automatically filled in by the system, no manual setting needed externally
+ * - cursorX / cursorY being null indicates the mouse has left the screen
  */
 export interface AwarenessState {
-    /** 系統自動產生的唯一識別碼 */
+    /** System-generated unique identifier */
     clientId: string;
-    /** 使用者顯示名稱 */
+    /** User Display Name */
     name: string;
     /** 使用者代表色 (hex) */
     color: string;
-    /** 游標 X 座標，null = 滑鼠離開視窗 */
+    /** Cursor X coordinate, null = mouse leaves the window */
     cursorX?: number | null;
-    /** 游標 Y 座標，null = 滑鼠離開視窗 */
+    /** Cursor Y coordinate, null = mouse leaves the window */
     cursorY?: number | null;
-    /** 目前選取的物件 ID (白板協作用) */
+    /** Currently selected object ID (for whiteboard collaboration) */
     selection?: string | null;
-    /** 離線旗標，僅在 leaveAwareness 時使用 */
+    /** Offline flag, used only during leaveAwareness */
     offline?: boolean;
-    /** 裝置類型 */
+    /** Device Type */
     device?: 'mobile' | 'desktop';
-    /** 最後活動時間 (ms)，用於判斷幽靈游標 */
+    /** Last activity time (ms), used to determine ghost cursors */
     lastActive?: number;
-    /** 最後更新時間戳 (ms)，用於 Heartbeat 判活 */
+    /** Timestamp of the last update (ms), used for Heartbeat to check activity */
     timestamp: number;
 }
 
 /**
- * setAwareness() 接受的部分更新型別
- * clientId / timestamp 由系統自動填入，外部不需傳入
+ * The partial update types accepted by setAwareness()
+ * clientId / timestamp are automatically filled in by the system, no need to provide them externally
  */
 export type AwarenessPartial = Partial<Omit<AwarenessState, 'clientId' | 'timestamp'>>;
 
 /**
- * 游標渲染器的函式簽章
+ * Function signature of the cursor renderer
  */
 export type CursorRenderer = (color: string, name: string) => HTMLElement;
 
 /**
- * Awareness 變更回呼的函式簽章
+ * Awareness Change the callback function signature
  */
 export type AwarenessCallback = (states: Map<string, AwarenessState>) => void;
 

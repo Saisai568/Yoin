@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useYoinMap, useYoinArray, useYoinAwareness } from './react';
 
-// 定義資料型別 (Schema)
+// Schema
 type AppSettings = {
     themeColor: string;
     username: string;
@@ -36,7 +36,6 @@ const UserList = () => {
 };
 
 const SettingsPanel = () => {
-    // ✨ Magic: 直接拿到 Proxy 物件，修改它就會同步！
     const settings = useYoinMap<AppSettings>('app-settings');
     
     return (
@@ -47,7 +46,7 @@ const SettingsPanel = () => {
                 <input 
                     type="color" 
                     value={String(settings.themeColor ?? '#ffffff')}
-                    // 直接賦值，自動觸發 setMap -> Sync -> React Render
+                    // Direct assignment, automatically triggers setMap -> Sync -> React Render
                     onChange={(e) => settings.themeColor = e.target.value} 
                 />
             </div>
@@ -68,7 +67,7 @@ const SettingsPanel = () => {
 };
 
 const LogPanel = () => {
-    // ✨ Magic: 陣列操作就像本地陣列一樣
+    // ✨ Magic: Array operations work just like native arrays
     const logs = useYoinArray<ActionLog>('action-logs');
 
     const addLog = () => {
@@ -94,7 +93,6 @@ const LogPanel = () => {
 };
 
 export const App = () => {
-    // 取得根層級的 settings 來控制背景色
     const settings = useYoinMap<AppSettings>('app-settings');
 
     return (

@@ -1,24 +1,24 @@
 // client/src/network.ts
 import type { NetworkStatus } from './types';
 
-// 接收一個 Uint8Array (二進制資料)，回傳 void (或是 Promise<void>)
+// Receives a Uint8Array (binary data) and returns void (or Promise<void>)
 type MessageCallback = (data: Uint8Array) => void | Promise<void>;
-type ConnectCallback = () => void; //  新增連線成功的回呼型別
+type ConnectCallback = () => void; 
 type StatusCallback = (status: NetworkStatus) => void;
 
 export class NetworkProvider {
     private url: string;
     private socket: WebSocket | null = null;
     private onMessageReceived: MessageCallback;
-    private onConnect: ConnectCallback;             //  新增連線成功的回呼函數
-    private onStatusChange: StatusCallback;         //  新增網路狀態變更的回呼函數
+    private onConnect: ConnectCallback;         
+    private onStatusChange: StatusCallback;
     private messageQueue: Uint8Array[] = [];
     
     constructor(
         url: string, 
         onConnect: ConnectCallback, 
         onMessageReceived: MessageCallback,
-        onStatusChange: StatusCallback          // 接收狀態回呼
+        onStatusChange: StatusCallback
     ) {
         this.url = url;
         this.onConnect = onConnect;
@@ -27,7 +27,6 @@ export class NetworkProvider {
         this.connect();
     }
 
-    // [新增] Getter 讓外部知道連線狀態
     public get isConnected(): boolean {
         return this.socket !== null && this.socket.readyState === WebSocket.OPEN;
     }
@@ -58,7 +57,6 @@ export class NetworkProvider {
             console.warn("[Network] Disconnected");
             this.onStatusChange('offline'); 
             
-            // 簡單的斷線重連機制 (3秒後重試)
             setTimeout(() => this.connect(), 3000);
         };
 
@@ -68,14 +66,14 @@ export class NetworkProvider {
     }
 
     /**
-     * 發送二進制更新給 Server
+     * Send binary update to Server
      */
     public broadcast(update: Uint8Array): void {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-            // 網路暢通，直接發送
+            // Smooth internet, send directly
             this.socket.send(update);
         } else {
-            // 🔴 修改：網路斷開時，存入佇列而不是丟棄
+            // When the network is disconnected, store it in the queue instead of discarding it
             console.warn(`⚠️ [Network] Offline. Queuing update (${update.length} bytes)`);
             this.messageQueue.push(update);
         }
