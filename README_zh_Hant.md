@@ -141,8 +141,8 @@ yoin/
 ├── apps/
 │   └── demo/           # 展示用 Demo（Vanilla JS + React）
 ├── server/             # Node.js 開發用伺服器
-├── docs/               # 技術文件與 Blog
-└── deploy.bat          # 一鍵全棧部署腳本
+├── docs/               # 技術文件
+└── deploy.bat          # 一鍵全端部署腳本
 ```
 
 ## 開發指南
@@ -193,6 +193,6 @@ pnpm deploy:pages    # 建置 + 部署 Pages
 | 測試 | Vitest + Playwright | 單元 / E2E 雙軌測試 |
 | 部署 | Cloudflare Pages + Workers | 全球 Edge 分發 |
 
-## 授權
+## 授權與版權
 
 MIT License

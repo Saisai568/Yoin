@@ -141,7 +141,7 @@ yoin/
 ├── apps/
 │   └── demo/           # Demo application (Vanilla JS + React)
 ├── server/             # Node.js development server
-├── docs/               # Technical docs & blog posts
+├── docs/               # Technical docs
 └── deploy.bat          # One-click full-stack deploy script
 ```
 
