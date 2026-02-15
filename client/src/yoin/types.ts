@@ -8,7 +8,8 @@ import { z } from 'zod';
  */
 export interface YoinConfig {
     url: string;
-    dbName: string;
+    /** IndexedDB 資料庫名稱 (已移至 DbPlugin，此處為向後相容保留) */
+    dbName?: string;
     docId: string;
     /** Awareness 網路廣播的節流間隔 (ms)，預設 30 */
     awarenessThrottleMs?: number;
@@ -16,6 +17,8 @@ export interface YoinConfig {
     heartbeatIntervalMs?: number;
     /** 判定離線的超時門檻 (ms)，預設 30000 */
     heartbeatTimeoutMs?: number;
+    /** Schema 定義：Map 名稱 -> Zod Schema */
+    schemas?: Record<string, z.ZodTypeAny>;
 }
 
 /**
@@ -38,21 +41,12 @@ export interface AwarenessState {
     selection?: string | null;
     /** 離線旗標，僅在 leaveAwareness 時使用 */
     offline?: boolean;
+    /** 裝置類型 */
+    device?: 'mobile' | 'desktop';
+    /** 最後活動時間 (ms)，用於判斷幽靈游標 */
+    lastActive?: number;
     /** 最後更新時間戳 (ms)，用於 Heartbeat 判活 */
     timestamp: number;
-}
-
-export interface YoinConfig {
-    url: string;
-    dbName: string;
-    docId: string;
-    awarenessThrottleMs?: number;
-    heartbeatIntervalMs?: number;
-    heartbeatTimeoutMs?: number;
-    
-    // [新增] Schema 定義：Map 名稱 -> Zod Schema
-    // 例如: { "settings": z.object({ theme: z.string() }) }
-    schemas?: Record<string, z.ZodTypeAny>;
 }
 
 /**

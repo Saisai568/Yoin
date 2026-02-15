@@ -1,7 +1,7 @@
 // client/src/main.ts
 import { initYoin, YoinClient, initPanicHook } from './yoin';
-import { createUndoPlugin } from './yoin/undo';
-import { createDbPlugin } from './yoin/db';
+import { createUndoPlugin } from './yoin/plugins/undo';
+import { createDbPlugin } from './yoin/plugins/db';
 import { createLoggerPlugin } from './yoin/logger';
 import { createMapProxy, createArrayProxy } from './yoin/proxy';
 import { createDefaultCursor, createEmojiCursor, createAvatar } from './renderers';
@@ -71,13 +71,11 @@ async function bootstrap() {
         debounceMs: 1000,
     });
     
-    const undoPlugin = createUndoPlugin({
-        captureTimeout: 500
-    });
+    const undoPlugin = createUndoPlugin();
 
     client
-        .use(dbPlugin)    // 1. IndexedDB 持久化
-        .use(undoPlugin)  // 2. Undo/Redo 能力
+        .use(dbPlugin.plugin)    // 1. IndexedDB 持久化
+        .use(undoPlugin.plugin)  // 2. Undo/Redo 能力
         .use(createLoggerPlugin()); // 3. Logger 插件
 
     log('🔌 Plugins installed: yoin-db, yoin-undo, logger');
@@ -154,8 +152,8 @@ async function bootstrap() {
 
     document.addEventListener('mouseleave', () => {
         pendingCursor = null;
-        // 離開視窗時，可以選擇清除座標或標記離線
-        // client.setAwareness({ cursorX: null, cursorY: null });
+        // 離開視窗時，清除座標避免幽靈游標
+        client.setAwareness({ cursorX: null, cursorY: null });
     });
 
     // ==========================================
@@ -227,7 +225,8 @@ async function bootstrap() {
             if (clientId === myClientId) return;
             
             // [關鍵修復] 過濾幽靈：超過 5 秒沒更新的座標不顯示
-            if (state.lastActive && (now - state.lastActive > 5000)) {
+            const lastSeen = state.lastActive ?? state.timestamp;
+            if (lastSeen && (now - lastSeen > 5000)) {
                 return;
             }
 
@@ -315,10 +314,6 @@ async function bootstrap() {
                     appContainer.style.transition = 'border-color 0.3s ease';
                 }
                 mapDisplay.style.borderLeft = `8px solid ${mapData.themeColor}`;
-                
-                // [Test Case 3: Map Undo/Redo - Sync Background]
-                // 為了演示效果，我們也同步 body 背景色
-                // document.body.style.backgroundColor = mapData.themeColor;
             }
         }
 
@@ -345,6 +340,13 @@ async function bootstrap() {
                     arrayDisplay.appendChild(li);
                 });
             }
+        }
+
+        // D. Config (Background Color)
+        const configData = client.getMap('config');
+        if (configData && configData.bg) {
+            document.body.style.backgroundColor = configData.bg;
+            document.body.style.transition = 'background-color 0.5s ease';
         }
     });
 
@@ -379,6 +381,19 @@ async function bootstrap() {
             client.setMap('app-settings', 'themeColor', randomColor);
             client.setMap('app-settings', 'lastUpdatedBy', myName);
             log(`🎨 Theme color has been updated to ${randomColor}`);
+        };
+    }
+
+    // Change Theme 按鈕：改變整個頁面的背景色
+    const btnTheme = document.getElementById('btn-theme');
+    if (btnTheme) {
+        btnTheme.onclick = () => {
+            const colors = ['#dfe6e9', '#ffeaa7', '#81ecec', '#fab1a0', '#74b9ff', '#a29bfe'];
+            const randomColor = colors[Math.floor(Math.random() * colors.length)];
+            
+            log(`[UI] Setting theme color to: ${randomColor}`);
+            // "config" 是 map 名稱, "bg" 是 key
+            client.setMap('config', 'bg', randomColor);
         };
     }
 
