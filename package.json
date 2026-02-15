@@ -1,0 +1,30 @@
+{
+  "name": "yoin-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:wasm": "cd packages/core && wasm-pack build --target web --out-dir pkg-web",
+    "build:client": "pnpm --filter @yoin/client build",
+    "build:demo": "pnpm --filter @yoin/demo build",
+    "build": "pnpm build:wasm && pnpm build:client && pnpm build:demo",
+    "deploy:worker": "pnpm --filter yoin-worker run deploy",
+    "deploy:pages": "pnpm build && pnpm --filter @yoin/demo run deploy",
+    "deploy": "pnpm build && pnpm deploy:worker && pnpm --filter @yoin/demo run deploy",
+    "dev:demo": "pnpm --filter @yoin/demo dev",
+    "test": "pnpm --filter @yoin/client test && node tests/monorepo-integrity.test.mjs",
+    "test:unit": "pnpm --filter @yoin/client test",
+    "test:integration": "node tests/monorepo-integrity.test.mjs",
+    "test:coverage": "pnpm --filter @yoin/client test:coverage",
+    "test:e2e": "pnpm --filter @yoin/demo exec playwright test",
+    "typecheck": "pnpm --filter @yoin/client typecheck && pnpm --filter @yoin/demo typecheck",
+    "clean": "pnpm -r exec rm -rf dist node_modules/.cache"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  }
+}

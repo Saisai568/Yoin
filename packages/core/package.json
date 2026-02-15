@@ -1,0 +1,23 @@
+{
+  "name": "@yoin/core",
+  "version": "0.2.0",
+  "type": "module",
+  "private": true,
+  "description": "Yoin CRDT core - Rust/WASM bindings built with wasm-pack",
+  "main": "./pkg-web/core.js",
+  "types": "./pkg-web/core.d.ts",
+  "exports": {
+    ".": {
+      "types": "./pkg-web/core.d.ts",
+      "import": "./pkg-web/core.js"
+    },
+    "./core_bg.wasm": "./pkg-web/core_bg.wasm"
+  },
+  "files": [
+    "pkg-web"
+  ],
+  "scripts": {
+    "build": "wasm-pack build --target web --out-dir pkg-web"
+  },
+  "sideEffects": false
+}

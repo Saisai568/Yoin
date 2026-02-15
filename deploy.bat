@@ -1,18 +1,31 @@
 @echo off
-echo [1/3] Building Rust Core...
-cd core
-wasm-pack build --target web
+echo === Yoin Monorepo Full Deploy ===
+echo.
+
+echo [1/5] Building Rust Core (wasm-pack)...
+cd packages\core
+wasm-pack build --target web --out-dir pkg-web
+if %errorlevel% neq 0 exit /b %errorlevel%
+cd ..\..
+
+echo [2/5] Building @yoin/client SDK (tsup)...
+call pnpm --filter @yoin/client build
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-echo [2/3] Deploying Backend Worker...
-cd ../yoin-worker
-call npm run deploy
+echo [3/5] Deploying Cloudflare Worker (Durable Objects)...
+cd yoin-worker
+call pnpm run deploy
 if %errorlevel% neq 0 exit /b %errorlevel%
-
-echo [3/3] Building & Deploying Frontend Client...
-cd ../client
-call npm run build
-call npx wrangler pages deploy dist --project-name=yoin-client
-echo Done!
 cd ..
+
+echo [4/5] Building Demo App (Vite)...
+call pnpm --filter @yoin/demo build
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo [5/5] Deploying to Cloudflare Pages...
+call pnpm --filter @yoin/demo run deploy
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+echo.
+echo === Deploy Complete ===
 pause

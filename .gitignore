@@ -14,6 +14,7 @@
 *.njsproj
 *.sln
 *.sw?
+docs_self/
 
 # Node (Client & Server)
 node_modules/
