@@ -1,4 +1,4 @@
-// apps\demo\src\main.tsx
+// apps/demo/src/main.tsx
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { initYoin, YoinClient, createUndoPlugin, createDbPlugin } from '@yoin/client';
@@ -11,7 +11,7 @@ async function bootstrap() {
     console.log("Initializing Yoin Engine...");
     await initYoin();
 
-    // 1. 設定 Client 與 Schema
+    // 1. Set up Client and Schema
     const urlParams = new URLSearchParams(window.location.search);
     const room = urlParams.get('room') || 'react-demo';
 
@@ -33,12 +33,12 @@ async function bootstrap() {
         }
     });
 
-    // 2. 掛載插件
+    // 2. Mount Plugin
     client
         .use(createDbPlugin({ dbName: `YoinReactDB-${room}` }).plugin)
         .use(createUndoPlugin().plugin);
 
-    // 3. 啟動 React
+    // 3. Mount React App
     const rootEl = document.getElementById('root');
     if (rootEl) {
         const root = createRoot(rootEl);

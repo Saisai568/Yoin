@@ -5,12 +5,12 @@ const wss = new WebSocket.Server({ port: 8080 });
 // ==========================================
 // 1. Protocol Constants
 // ==========================================
-// 必須與前端 YoinClient.ts 保持一致
+// Must be consistent with the front-end YoinClient.ts
 const MSG_SYNC_STEP_1 = 0;
 const MSG_SYNC_STEP_2 = 1;
 const MSG_SYNC_STEP_1_REPLY = 2;
 const MSG_AWARENESS = 3;
-const MSG_JOIN_ROOM = 4; // [New]
+const MSG_JOIN_ROOM = 4;
 
 // ==========================================
 // 2. Room State Management

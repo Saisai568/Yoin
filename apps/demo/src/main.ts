@@ -1,4 +1,4 @@
-// apps\demo\src\main.ts
+// apps/demo/src/main.ts
 import {
   initYoin,
   YoinClient,
@@ -39,21 +39,21 @@ async function bootstrap() {
     const currentRoom = urlParams.get('room') || 'default-room';
 
     // ==========================================
-    // Micro-kernel: 建立輕量核心
+    // Micro-kernel
     // ==========================================
     const client = new YoinClient({
-        url: 'wss://yoin-worker.saiguanen.workers.dev', // 請確認你的 Worker 網址
+        url: 'wss://yoin-worker.saiguanen.workers.dev', // Please confirm your Worker URL
         docId: currentRoom,
         awarenessThrottleMs: 30,
         heartbeatIntervalMs: 5000,
         heartbeatTimeoutMs: 30000,
         
-        // 資料驗證規則
+        // Data Validation Rules
         schemas: {
             'app-settings': z.object({
-                themeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "顏色必須是 Hex 格式 (例如 #ff0000)"),
+                themeColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "The color must be in Hex format (e.g., #ff0000)"),
                 lastUpdatedBy: z.string().optional(),
-                // 允許任意額外屬性以支援 Deep Proxy 測試 (如 ui.sidebar)
+                // Allow arbitrary additional properties to support Deep Proxy testing (such as ui.sidebar)
             }).passthrough(), 
             'action-logs': z.array(z.object({
                 action: z.string(),
@@ -63,10 +63,10 @@ async function bootstrap() {
     });
 
     // ==========================================
-    // Micro-kernel: 掛載插件
+    // Micro-kernel: Mount plugins
     // ==========================================
-    // 注意：undoPlugin 必須在 dbPlugin 之後掛載，或者根據依賴關係調整
-    // 這裡我們示範標準順序：DB -> Undo -> Logger
+    // Note: undoPlugin must be mounted after dbPlugin, or adjust according to dependencies
+    // Here we demonstrate the standard order: DB -> Undo -> Logger
     
     const dbPlugin = createDbPlugin({
         dbName: `YoinDemoDB-${currentRoom}`,
@@ -76,13 +76,12 @@ async function bootstrap() {
     const undoPlugin = createUndoPlugin();
 
     client
-        .use(dbPlugin.plugin)    // 1. IndexedDB 持久化
-        .use(undoPlugin.plugin)  // 2. Undo/Redo 能力
-        .use(createLoggerPlugin()); // 3. Logger 插件
+        .use(dbPlugin.plugin)    // 1. IndexedDB Persistence
+        .use(undoPlugin.plugin)  // 2. Undo/Redo functionality
+        .use(createLoggerPlugin()); // 3. Logger Plugin
 
     log('🔌 Plugins installed: yoin-db, yoin-undo, logger');
 
-    // 方便除錯
     (window as any).client = client;
     console.log("✅ Yoin Client has been mounted to window.client for debugging");
 
@@ -103,13 +102,13 @@ async function bootstrap() {
     // 3. Mouse Input Throttled by rAF (Performance: Input)
     // ==========================================
     
-    // [New] 判斷裝置類型
+    // Determine Device Type (Mobile vs Desktop) for Adaptive Cursor Rendering
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
     let pendingCursor: { x: number; y: number } | null = null;
     let rafScheduled = false;
 
-    // 定義廣播位置的函式
+    // Function to define broadcast location updates, throttled by requestAnimationFrame
     const updateCursor = (x: number, y: number) => {
         pendingCursor = { x, y };
         if (!rafScheduled) {
@@ -120,7 +119,7 @@ async function bootstrap() {
                         cursorX: pendingCursor.x,
                         cursorY: pendingCursor.y,
                         device: isMobile ? 'mobile' : 'desktop',
-                        lastActive: Date.now() // 用於判斷是否為「幽靈」
+                        lastActive: Date.now()              // Used to determine if it is a 'ghost'
                     });
                     pendingCursor = null;
                 }
@@ -129,14 +128,14 @@ async function bootstrap() {
         }
     };
 
-    // 綁定 Desktop 事件 (滑鼠)
+    // Bind Desktop Event (Mouse)
     window.addEventListener('mousemove', (e) => {
         if (!isMobile) {
             updateCursor(e.clientX, e.clientY);
         }
     });
 
-    // 綁定 Mobile 事件 (觸控)
+    // Bind Mobile Event (Touch)
     window.addEventListener('touchmove', (e) => {
         if (e.touches.length > 0) {
             const touch = e.touches[0];
@@ -144,7 +143,7 @@ async function bootstrap() {
         }
     }, { passive: true });
 
-    // Mobile 點擊時也更新一下
+    // Also update when clicking on mobile, since touchmove may not trigger if user just taps without moving
     window.addEventListener('touchstart', (e) => {
         if (e.touches.length > 0) {
             const touch = e.touches[0];
@@ -154,16 +153,16 @@ async function bootstrap() {
 
     document.addEventListener('mouseleave', () => {
         pendingCursor = null;
-        // 離開視窗時，清除座標避免幽靈游標
+        // Clear coordinates when leaving the window to prevent ghost cursors
         client.setAwareness({ cursorX: null, cursorY: null });
     });
 
     // ==========================================
-    // 4. 渲染器切換
+    // 4. Renderer Switching (Dynamic UI)
     // ==========================================
     let currentRenderer: CursorRenderer = createDefaultCursor;
 
-    // 保存游標 DOM 元素的快取 (DOM Diffing 用)
+    // Cache the cursor DOM element (for DOM Diffing)
     const cursorElements = new Map<string, HTMLElement>();
 
     const btnToggleCursor = document.getElementById('btn-toggle-cursor');
@@ -171,12 +170,11 @@ async function bootstrap() {
         btnToggleCursor.onclick = () => {
             if (currentRenderer === createDefaultCursor) {
                 currentRenderer = createEmojiCursor;
-                log("🔄 已切換為：Emoji 風格");
+                log("🔄 Switched to: Emoji style");
             } else {
                 currentRenderer = createDefaultCursor;
-                log("🔄 已切換為：標準風格");
+                log("🔄 Switched to: Default style");
             }
-            // 清除所有游標快取，下一次 awareness 回呼時會用新渲染器重建
             cursorElements.forEach(el => el.remove());
             cursorElements.clear();
             client.notifyAwarenessListeners();
@@ -184,10 +182,10 @@ async function bootstrap() {
     }
 
     // ==========================================
-    // 5. 🌟 Awareness 渲染迴圈 (DOM Diffing)
+    // 5. 🌟 Awareness Rendering Loop (DOM Diffing)
     // ==========================================
 
-    // 建立游標專用全螢幕圖層
+    // Create a fullscreen layer dedicated to the cursor 
     let cursorLayer = document.getElementById('cursor-layer');
     if (!cursorLayer) {
         cursorLayer = document.createElement('div');
@@ -206,33 +204,28 @@ async function bootstrap() {
     client.onAwarenessChange((states: Map<string, AwarenessState>) => {
         const now = Date.now();
 
-        // --- A. 更新右上角頭像列表 ---
+        // --- A. Update the profile picture list in the top right corner ---
         const avatarContainer = document.getElementById('awareness-container');
         if (avatarContainer) {
-            avatarContainer.innerHTML = '<span style="font-size: 0.9rem; color: #666; margin-right: 5px;">在線成員:</span>';
+            avatarContainer.innerHTML = '<span style="font-size: 0.9rem; color: #666; margin-right: 5px;">Online Members:</span>';
             states.forEach((state, clientId) => {
                 const isSelf = clientId === myClientId;
-                // 這裡假設 createAvatar 已經適配新的 state 結構
                 const avatar = createAvatar(state.name || 'User', state.color || '#ccc', isSelf, clientId);
                 avatarContainer.appendChild(avatar);
             });
         }
 
-        // --- B. 🎯 DOM Diffing + CSS transform 游標渲染 ---
-        // 收集本幀應該存在的遠端游標 ID
+        // --- B. 🎯 DOM Diffing + CSS transform Cursor Rendering ---
+        // Collect the remote cursor IDs that should exist in this frame
         const activeIds = new Set<string>();
 
         states.forEach((state, clientId) => {
-            // 跳過自己
             if (clientId === myClientId) return;
-            
-            // [關鍵修復] 過濾幽靈：超過 5 秒沒更新的座標不顯示
             const lastSeen = state.lastActive ?? state.timestamp;
             if (lastSeen && (now - lastSeen > 5000)) {
                 return;
             }
 
-            // 跳過沒有座標的用戶
             if (state.cursorX == null || state.cursorY == null) return;
             
             activeIds.add(clientId);
@@ -240,9 +233,9 @@ async function bootstrap() {
             let el = cursorElements.get(clientId);
 
             if (!el) {
-                // 🆕 新使用者 → 建立游標 DOM 並加入圖層
-                // 如果是 Mobile，我們手動覆蓋 renderer 或者在 renderer 內部判斷
-                // 這裡簡單示範：如果是 Mobile，使用圓點樣式
+                // 🆕 New user → create cursor DOM and add it to the layer
+                // If it's Mobile, we manually override the renderer or check inside the renderer
+                // Simple demonstration here: if it's Mobile, use a dot style
                 if (state.device === 'mobile') {
                     el = document.createElement('div');
                     el.style.cssText = `
@@ -251,7 +244,6 @@ async function bootstrap() {
                         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
                         transition: transform 100ms linear;
                     `;
-                    // 加上名稱標籤
                     const label = document.createElement('div');
                     label.innerText = state.name || 'User';
                     label.style.cssText = `
@@ -269,12 +261,10 @@ async function bootstrap() {
                 cursorLayer!.appendChild(el);
                 cursorElements.set(clientId, el);
             }
-
-            // 🔄 更新位置 (Hardware Accelerated via CSS transform)
             el.style.transform = `translate(${state.cursorX}px, ${state.cursorY}px)`;
         });
 
-        // 🗑️ 移除已離線/無座標的舊游標
+        // Remove old cursors that are offline or have no coordinates
         for (const [clientId, el] of cursorElements.entries()) {
             if (!activeIds.has(clientId)) {
                 el.remove();
@@ -282,7 +272,7 @@ async function bootstrap() {
             }
         }
 
-        // --- C. 白板物件選取邊框 (Selection Awareness) ---
+        // --- C. Whiteboard Object Selection Border (Selection Awareness) ---
         document.querySelectorAll('.shape').forEach(shape => {
             (shape as HTMLElement).style.border = '';
         });
@@ -297,14 +287,14 @@ async function bootstrap() {
     });
 
     // ==========================================
-    // 6. CRDT 資料訂閱 (Text / Map / Array)
+    // 6. CRDT Data Subscription (Text / Map / Array)
     // ==========================================
     client.subscribe((text) => {
-        // A. 文字
+        // A. Text
         const display = document.getElementById('display');
         if (display) display.innerText = text;
 
-        // B. Map (設定檔)
+        // B. Map (ex: settings)
         const mapData = client.getMap('app-settings');
         const mapDisplay = document.getElementById('map-display');
         if (mapDisplay) {
@@ -319,7 +309,7 @@ async function bootstrap() {
             }
         }
 
-        // C. Array (歷史紀錄)
+        // C. Array (ex: Historical records)
         const arrayData = client.getArray('action-logs');
         const arrayDisplay = document.getElementById('array-display');
         if (arrayDisplay) {
@@ -329,8 +319,6 @@ async function bootstrap() {
             } else {
                 arrayData.forEach(item => {
                     const li = document.createElement('li');
-                    // 處理可能已經是物件的 item (如果我們在 client 做了 JSON.parse)
-                    // 或者還是 JSON 字串的 item
                     let content = item;
                     if (typeof item === 'string') {
                          try { content = JSON.parse(item); } catch {}
@@ -353,10 +341,10 @@ async function bootstrap() {
     });
 
     // ==========================================
-    // 7. 按鈕綁定
+    // 7. Button Binding (CRDT Operations)
     // ==========================================
 
-    // 寫入測試文字
+    // Write test text
     const btnInsert = document.getElementById('btn-insert');
     if (btnInsert) {
         btnInsert.onclick = () => {
@@ -365,7 +353,7 @@ async function bootstrap() {
         };
     }
 
-    // 清空內容
+    // Clear content
     const btnClear = document.getElementById('btn-clear');
     if (btnClear) {
         btnClear.onclick = () => {
@@ -374,7 +362,7 @@ async function bootstrap() {
         };
     }
 
-    // 隨機切換主題顏色 (寫入 'app-settings')
+    // Randomly switch theme color (write to 'app-settings')
     const btnUpdateMap = document.getElementById('btn-update-map');
     if (btnUpdateMap) {
         btnUpdateMap.onclick = () => {
@@ -386,7 +374,7 @@ async function bootstrap() {
         };
     }
 
-    // Change Theme 按鈕：改變整個頁面的背景色
+    // Change Theme Button: Changes the background color of the entire page
     const btnTheme = document.getElementById('btn-theme');
     if (btnTheme) {
         btnTheme.onclick = () => {
@@ -394,12 +382,12 @@ async function bootstrap() {
             const randomColor = colors[Math.floor(Math.random() * colors.length)];
             
             log(`[UI] Setting theme color to: ${randomColor}`);
-            // "config" 是 map 名稱, "bg" 是 key
+            // "config" is the name of the map, and "bg" is the key for theme color. 
             client.setMap('config', 'bg', randomColor);
         };
     }
 
-    // 推入歷史紀錄
+    // Push to history
     const btnPushArray = document.getElementById('btn-push-array');
     if (btnPushArray) {
         btnPushArray.onclick = () => {
@@ -410,7 +398,7 @@ async function bootstrap() {
     }
 
     // ==========================================
-    // 8. 網路狀態 UI
+    // 8. Network Status UI
     // ==========================================
     client.subscribeNetwork((status) => {
         const statusEl = document.getElementById('connection-status');
@@ -430,14 +418,14 @@ async function bootstrap() {
     });
 
     // ==========================================
-    // 9. 清理：離開時通知
+    // 9. Cleaning: Notify upon departure
     // ==========================================
     window.addEventListener('beforeunload', () => {
-        client.destroy(); // 使用 destroy 來清理 heartbeat 和 awareness
+        client.destroy(); // Use destroy to clean up heartbeat and awareness
     });
 
     // ==========================================
-    // 10. 白板物件選取 (Selection Awareness)
+    // 10. Whiteboard Object Selection (Selection Awareness)
     // ==========================================
     document.querySelectorAll('.shape').forEach(el => {
         el.addEventListener('click', (e) => {
@@ -451,12 +439,12 @@ async function bootstrap() {
     // ==========================================
     const btnUndo = document.getElementById('btn-undo');
     if (btnUndo) {
-        btnUndo.onclick = () => undoPlugin.undo(); // 使用插件的 undo()
+        btnUndo.onclick = () => undoPlugin.undo();
     }
 
     const btnRedo = document.getElementById('btn-redo');
     if (btnRedo) {
-        btnRedo.onclick = () => undoPlugin.redo(); // 使用插件的 redo()
+        btnRedo.onclick = () => undoPlugin.redo();
     }
     
     // Keyboard shortcuts (Ctrl+Z / Ctrl+Y)
@@ -475,7 +463,7 @@ async function bootstrap() {
     // 🔮 Test Case 4: Proxy Transparency (Deep Proxy)
     // ==========================================
     
-    // 定義 App 設定型別
+   // Define App settings type
     type AppSettings = {
         themeColor: string;
         lastUpdatedBy?: string;
@@ -487,18 +475,18 @@ async function bootstrap() {
         }
     };
 
-    // 1. 建立 'app-settings' 的 Proxy
+    // 1. Set up a proxy for 'app-settings'
     const settingsStore = createMapProxy<AppSettings>(client, 'app-settings');
 
-    // 2. 建立 'action-logs' 的 Array Proxy
-    // 定義 Log Item 型別
+    // 2. Create an Array Proxy for 'action-logs'
+    // Define the Log Item type
     interface ActionLog {
         action: string;
         time: string;
     }
     const logsStore = createArrayProxy<ActionLog>(client, 'action-logs');
 
-    // 3. 綁定測試按鈕
+    // 3. Bind Test Button for Proxy Operations
     const btnProxyTest = document.getElementById('btn-proxy-test');
     
     if (btnProxyTest) {
@@ -507,21 +495,21 @@ async function bootstrap() {
             
             // --- Test A: Map Proxy ---
             try {
-                // 自動轉為 client.setMap()
+                // Automatically converted to client.setMap()
                 settingsStore.themeColor = '#fd79a8'; 
                 settingsStore.lastUpdatedBy = 'Proxy_User';
 
-                // Deep Proxy: 自動轉為 client.setMapDeep()
-                // 注意：必須在 schema 中允許額外屬性 (.passthrough())，否則會被 Zod 擋下
+                // DDeep Proxy: Automatically converts to client.setMapDeep()
+                // Note: Extra attributes must be allowed in the schema (.passthrough()), otherwise Zod will block them
                 if (!settingsStore.ui) {
-                     // 這裡我們模擬建立結構，但在 Yoin Proxy 中，
-                     // 我們可以直接對路徑賦值 (如果你的 Proxy 實作支援自動建立路徑)
-                     // 為了安全起見，我們先用 setMap 建立第一層
-                     // client.setMap('app-settings', 'ui', {}); 
-                     // 或者直接用 Proxy 嘗試寫入 (視 createDeepProxy 實作而定)
+                    // Here we simulate creating a structure, but in Yoin Proxy,
+                    // we can directly assign values to paths (if your Proxy implementation supports automatically creating paths)
+                    // For safety, let's first use setMap to create the first layer
+                    // client.setMap('app-settings', 'ui', {}); 
+                    // Or try writing directly with Proxy (depending on the implementation of createDeepProxy)
                 }
                 
-                // 假設 Proxy 支援深層寫入
+                // Assuming Proxy supports deep writing
                 if (settingsStore.ui?.sidebar) {
                     settingsStore.ui.sidebar.width = Math.floor(Math.random() * 500);
                     settingsStore.ui.sidebar.collapsed = false;
@@ -533,7 +521,7 @@ async function bootstrap() {
             // --- Test B: Array Proxy ---
             console.log("🔮 [Proxy Test] Testing Array Push...");
             try {
-                // 自動轉為 client.pushArray()
+                // Automatically converted to client.pushArray()
                 logsStore.push({
                     action: 'PROXY_PUSH',
                     time: new Date().toLocaleTimeString()

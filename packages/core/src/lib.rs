@@ -283,7 +283,7 @@ impl YoinDoc {
     }
 
     // ==========================================
-    // 🔍 Read Operations (JsValue — zero-copy to JS)
+    // 🔍 Read Operations (JsValue zero-copy to JS)
     // ==========================================
 
     pub fn get_text(&self, name: &str) -> String {
@@ -300,7 +300,7 @@ impl YoinDoc {
         to_js_value(&any_data)
     }
 
-    /// Kept for backward compatibility — alias of map_get_all
+    /// Kept for backward compatibility - alias of map_get_all
     pub fn map_get_json(&self, map_name: &str) -> JsValue {
         self.map_get_all(map_name)
     }

@@ -1,19 +1,19 @@
 import { test, expect, Page } from '@playwright/test';
 
-// 輔助函式：讓兩個視窗進入同一個房間
+// Helper function: Let two windows enter the same room
 async function joinRoom(page: Page, roomName: string, username: string) {
-  // 注意：這裡指向你的 React 入口
+  // Note: This points to your React entry.
   await page.goto(`http://localhost:5173/react.html?room=${roomName}`);
   
-  // 等待連線成功 (假設你有個 .status-indicator.online 元素)
+  // Waiting for connection to succeed (assuming you have a .status-indicator.online element)
   await page.waitForSelector('.status-indicator.online', { timeout: 10000 });
   
-  // 設定使用者名稱 (如果有 input)
+  // Set the username (if there is input)
   // await page.fill('input[name="username"]', username);
 }
 
-test('雙人協作資料與畫面應保持一致', async ({ browser }) => {
-  // 1. 建立兩個獨立的瀏覽器環境 (模擬兩個不同的人)
+test('Data and visuals for collaborative work between two people should remain consistent.', async ({ browser }) => {
+  // 1. Create two separate browser environments (to simulate two different people)
   const context1 = await browser.newContext();
   const context2 = await browser.newContext();
   
@@ -22,43 +22,42 @@ test('雙人協作資料與畫面應保持一致', async ({ browser }) => {
   
   const roomName = 'e2e-test-' + Date.now();
 
-  // 2. 雙方進入房間
+  // 2. Both parties enter the room
   await joinRoom(page1, roomName, 'UserA');
   await joinRoom(page2, roomName, 'UserB');
 
-  // 3. User A 執行操作：輸入文字
-  await page1.click('#btn-insert'); // 假設這是你的 "插入 Hello" 按鈕
-  await page1.type('body', 'Playwright Test'); // 或者直接在 document 上打字
+  // 3. User A Perform operation: enter text
+  await page1.click('#btn-insert'); // Assume this is your 'Insert Hello' button
+  await page1.type('body', 'Playwright Test'); // Or just type directly on the document
 
-  // 4. 等待同步 (關鍵！)
-  // 我們預期 User B 的螢幕上會出現 User A 打的字
-  // 這裡可以檢查 DOM 文字
+  // 4. Waiting for synchronization (crucial!)
+  // We expect the text typed by User A to appear on User B's screen
+  // You can check the DOM text here
   await expect(page2.locator('#display')).toContainText('Hello');
 
-  // 5. User B 執行操作：修改顏色
+  // 5. User B performed an action: changed the color
   await page2.click('#btn-update-map'); 
 
-  // 6. 驗證 User A 是否同步收到顏色變更
-  // 這裡假設背景色會變，我們等待 CSS 變化
+  // 6. Verify whether User A receives the color change synchronously
+  // Here we assume the background color will change, and we wait for the CSS change
   await page1.waitForFunction(() => {
     return document.getElementById('app-container')?.style.borderTopColor !== '';
   });
 
   // ==========================================
-  // 💀 抓鬼核心：視覺一致性比對
+  // Core of Ghost Hunting: Visual Consistency Comparison
   // ==========================================
   
-  // 為了避免 "游標閃爍" 或 "名稱標籤位置微小差異" 導致測試失敗，
-  // 我們可以先把游標圖層隱藏起來 (因為我們主要測內容一致性)
+  // To avoid test failures caused by 'cursor blinking' or 'slight differences in label positions',
+  // we can first hide the cursor layer (since we are mainly testing content consistency)
   await page1.evaluate(() => document.getElementById('cursor-layer')?.remove());
   await page2.evaluate(() => document.getElementById('cursor-layer')?.remove());
 
-  // 截圖
   const screenshot1 = await page1.screenshot();
   const screenshot2 = await page2.screenshot();
 
-  // 比較：雖然 Playwright 主要是跟「黃金範本」比對，
-  // 但這裡我們可以用簡單的 Buffer 比較，確保兩邊畫面 "完全一樣"
-  // (注意：這需要兩邊視窗大小完全一致，Playwright 預設會設為一致)
+  // Comparison: Although Playwright mainly compares with the 'golden template',
+  // here we can use a simple buffer comparison to ensure the screens on both sides are "completely identical"
+  // (Note: This requires the window sizes on both sides to be exactly the same, Playwright sets them to be the same by default)
   expect(screenshot1).toEqual(screenshot2);
 });
