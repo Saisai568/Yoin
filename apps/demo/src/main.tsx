@@ -1,3 +1,4 @@
+// apps\demo\src\main.tsx
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { initYoin, YoinClient, createUndoPlugin, createDbPlugin } from '@yoin/client';

@@ -1,4 +1,4 @@
-// client/src/main.ts
+// apps\demo\src\main.ts
 import {
   initYoin,
   YoinClient,
