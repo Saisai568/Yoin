@@ -63,9 +63,6 @@ importers:
 
   packages/client:
     dependencies:
-      '@yoin/core':
-        specifier: workspace:*
-        version: link:../core
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -76,6 +73,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.0.18
         version: 4.0.18(vitest@4.0.18(@types/node@25.2.3)(happy-dom@20.6.1))
+      '@yoin/core':
+        specifier: workspace:*
+        version: link:../core
       happy-dom:
         specifier: ^20.6.1
         version: 20.6.1

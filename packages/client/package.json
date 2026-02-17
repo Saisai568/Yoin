@@ -23,7 +23,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node -e \"require('fs').copyFileSync('../core/pkg-web/core_bg.wasm','dist/core_bg.wasm')\"",
     "typecheck": "tsc --noEmit",
     "dev": "tsup --watch",
     "clean": "rm -rf dist",
@@ -32,7 +32,6 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@yoin/core": "workspace:*",
     "zod": "^4.3.6"
   },
   "peerDependencies": {
@@ -44,6 +43,7 @@
     }
   },
   "devDependencies": {
+    "@yoin/core": "workspace:*",
     "@types/react": "^19.2.14",
     "@vitest/coverage-v8": "^4.0.18",
     "happy-dom": "^20.6.1",

@@ -8,7 +8,9 @@ export default defineConfig([
       react: 'src/react/index.tsx',
     },
     format: ['cjs', 'esm'],
-    dts: true,
+    dts: {
+      resolve: ['@yoin/core'],
+    },
     splitting: true,
     sourcemap: true,
     clean: true,
@@ -16,9 +18,10 @@ export default defineConfig([
     external: [
       'react',
       'react-dom',
-      // WASM modules are external - loaded at runtime
-      '@yoin/core',
     ],
+    // @yoin/core JS glue code is bundled; the .wasm binary is shipped
+    // separately in dist/ and loaded at runtime via initYoin().
+    noExternal: ['@yoin/core'],
     esbuildOptions(options) {
       options.jsx = 'automatic';
     },

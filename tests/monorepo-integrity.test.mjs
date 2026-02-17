@@ -74,8 +74,8 @@ assert(demoPkg.name === '@yoin/demo', 'Demo package name is @yoin/demo');
 console.log('\n=== 3. Cross-Package Dependencies ===');
 
 assert(
-  clientPkg.dependencies?.['@yoin/core'] === 'workspace:*',
-  '@yoin/client depends on @yoin/core (workspace:*)',
+  clientPkg.devDependencies?.['@yoin/core'] === 'workspace:*',
+  '@yoin/client devDepends on @yoin/core (workspace:*) — bundled at build time',
 );
 
 assert(
