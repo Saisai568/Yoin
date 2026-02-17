@@ -2,7 +2,7 @@
   "name": "@yoin/core",
   "version": "0.1.0",
   "type": "module",
-  "private": true,
+  "private": false,
   "description": "Yoin CRDT core - Rust/WASM bindings built with wasm-pack",
   "main": "./pkg-web/core.js",
   "types": "./pkg-web/core.d.ts",
