@@ -4,6 +4,7 @@
 // ============================================================
 import { YoinDoc } from '@yoin/core';
 import { NetworkProvider } from './network';
+import { isYoinInitialized } from './wasm/loader';
 import type { YoinPlugin } from './plugin';
 import type {
   YoinConfig,
@@ -63,6 +64,13 @@ export class YoinClient {
   // Constructor (Lightweight Initialization)
   // ==========================================
   constructor(config: YoinConfig) {
+    // Pre-flight: ensure WASM is ready before creating a client instance
+    if (!isYoinInitialized()) {
+      throw new Error(
+        '[Yoin] WASM engine not initialized. Call `await initYoin()` before creating a YoinClient.',
+      );
+    }
+
     this.config = config;
     this.myClientId = Math.random().toString(36).substring(2, 10);
     this.doc = new YoinDoc();
@@ -322,6 +330,7 @@ export class YoinClient {
     this.plugins.forEach((p) => p.onDestroy?.());
 
     this.leaveAwareness();
+    this.network.disconnect();
   }
 
   // ==========================================

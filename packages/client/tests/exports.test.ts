@@ -71,6 +71,7 @@ describe('@yoin/client exports', () => {
       'YoinClient',
       'YoinDbPlugin',
       'YoinDoc',
+      'YoinInitError',
       'YoinUndoPlugin',
       'createArrayProxy',
       'createDbPlugin',

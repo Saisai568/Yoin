@@ -4,7 +4,13 @@
 
 **Local-First Real-time Collaborative State Synchronization Framework**
 
+[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/Saisai568/yoin/releases/tag/v0.1.0)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-89%20passed-success.svg)](packages/client/tests)
+
 Yoin is a CRDT-based real-time collaboration framework that lets developers add multiplayer real-time sync to any application in just a few lines of code. The core engine is written in Rust and runs in the browser via WebAssembly, paired with Cloudflare Durable Objects for WebSocket relay — delivering low-latency, offline-capable, auto-merging collaborative experiences.
+
+> **📦 Version 0.1.0** — First public release with production-ready stability fixes. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## Features
 
@@ -192,6 +198,47 @@ pnpm deploy:pages    # Build + deploy Pages
 | Build Tools | Vite 7 + wasm-pack + tsup | WASM support + HMR |
 | Testing | Vitest + Playwright | Unit / E2E dual-track testing |
 | Deployment | Cloudflare Pages + Workers | Global edge distribution |
+
+## API Stability
+
+Yoin follows [Semantic Versioning 2.0.0](https://semver.org/):
+
+- **0.x versions (current):** API may include breaking changes between minor versions. Lock to patch versions:
+  ```json
+  "dependencies": {
+    "@yoin/client": "~0.1.0"  // Only accept patch updates
+  }
+  ```
+
+- **1.0.0 onwards:**
+  - **MAJOR**: Incompatible API changes
+  - **MINOR**: New backward-compatible features
+  - **PATCH**: Backward-compatible bug fixes
+
+### Currently Stable APIs
+✅ `YoinClient` core methods  
+✅ `createDbPlugin`, `createUndoPlugin`  
+⚠️ `Awareness` API may change in 0.2.0  
+⚠️ React Hooks signatures may evolve  
+
+## Documentation
+
+- 📖 [API Reference](docs/API.md) — Complete SDK documentation
+- 🏛️ [Architecture Guide](docs/ARCHITECTURE.md) — System design and internals
+- 👥 [Contributing Guide](docs/CONTRIBUTING.md) — Development workflow
+- 📄 [Changelog](CHANGELOG.md) — Version history and migration guides
+
+## Known Issues
+
+- Browser compatibility not fully tested on Safari < 14 and mobile browsers
+- Test coverage at 57% overall — `storage.ts` and `db.ts` plugins need additional tests
+- No built-in telemetry or error tracking integration yet
+
+See [GitHub Issues](https://github.com/Saisai568/yoin/issues) for the full list.
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
 
 ## License
 

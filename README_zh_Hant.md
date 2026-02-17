@@ -4,7 +4,13 @@
 
 **Local-First 即時協作狀態同步框架**
 
+[![版本](https://img.shields.io/badge/版本-0.1.0-blue.svg)](https://github.com/Saisai568/yoin/releases/tag/v0.1.0)
+[![授權](https://img.shields.io/badge/授權-MIT-green.svg)](LICENSE)
+[![測試](https://img.shields.io/badge/測試-89%20通過-success.svg)](packages/client/tests)
+
 Yoin 是一個基於 CRDT 的即時協作框架，讓開發者能在幾行程式碼內為應用加入多人即時同步能力。核心引擎以 Rust 編寫並透過 WebAssembly 在瀏覽器端執行，搭配 Cloudflare Durable Objects 提供 WebSocket 中繼，實現低延遲、可離線、自動合併的協作體驗。
+
+> **📦 版本 0.1.0** — 首次公開發布，包含生產環境穩定性修復。詳見 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 特色
 
@@ -192,6 +198,47 @@ pnpm deploy:pages    # 建置 + 部署 Pages
 | 建置工具 | Vite 7 + wasm-pack + tsup | WASM 支援 + 熱更新 |
 | 測試 | Vitest + Playwright | 單元 / E2E 雙軌測試 |
 | 部署 | Cloudflare Pages + Workers | 全球 Edge 分發 |
+
+## API 穩定性
+
+Yoin 遵循 [Semantic Versioning 2.0.0](https://semver.org/)：
+
+- **0.x 版本（當前）：** API 可能在次版本間包含破壞性變更。請鎖定修訂版本：
+  ```json
+  "dependencies": {
+    "@yoin/client": "~0.1.0"  // 僅接受 patch 更新
+  }
+  ```
+
+- **1.0.0 之後：**
+  - **MAJOR**: 不相容的 API 變更
+  - **MINOR**: 向後相容的新功能
+  - **PATCH**: 向後相容的 bug 修復
+
+### 當前穩定的 API
+✅ `YoinClient` 核心方法  
+✅ `createDbPlugin`、`createUndoPlugin`  
+⚠️ `Awareness` API 可能在 0.2.0 調整  
+⚠️ React Hooks 簽名可能變更  
+
+## 文檔
+
+- 📖 [API 參考](docs/API.md) — 完整 SDK 文檔
+- 🏛️ [架構指南](docs/ARCHITECTURE.md) — 系統設計與內部機制
+- 👥 [貢獻指南](docs/CONTRIBUTING.md) — 開發流程
+- 📄 [變更記錄](CHANGELOG.md) — 版本歷史與移轉指南
+
+## 已知問題
+
+- 瀏覽器相容性尚未在 Safari < 14 和行動瀏覽器上完整測試
+- 測試覆蓋率為 57% — `storage.ts` 和 `db.ts` 插件需要額外測試
+- 尚未內建遠端監測或錯誤追蹤整合
+
+請見 [GitHub Issues](https://github.com/Saisai568/yoin/issues) 查看完整清單。
+
+## 貢獻
+
+歡迎貢獻！請閱讀 [CONTRIBUTING.md](docs/CONTRIBUTING.md) 了解指南。
 
 ## 授權與版權
 

@@ -34,4 +34,4 @@ export type AwarenessCallback = (
   states: Map<string, AwarenessState>,
 ) => void;
 
-export type NetworkStatus = 'connecting' | 'online' | 'offline';
+export type NetworkStatus = 'connecting' | 'online' | 'offline' | 'failed';

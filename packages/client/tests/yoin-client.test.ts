@@ -8,6 +8,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Mock @yoin/core before importing YoinClient
 vi.mock('@yoin/core', () => import('./__mocks__/core'));
 
+// Mock WASM loader so isYoinInitialized() returns true in tests
+vi.mock('../src/wasm/loader', () => ({
+  isYoinInitialized: () => true,
+  initYoin: async () => {},
+  YoinInitError: class YoinInitError extends Error { name = 'YoinInitError'; },
+}));
+
 // Mock WebSocket
 class MockWebSocket {
   static OPEN = 1;

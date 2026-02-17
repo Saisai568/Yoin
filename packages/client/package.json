@@ -54,6 +54,19 @@
   },
   "sideEffects": false,
   "license": "MIT",
+  "author": "Saisai568",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Saisai568/yoin.git",
+    "directory": "packages/client"
+  },
+  "bugs": {
+    "url": "https://github.com/Saisai568/yoin/issues"
+  },
+  "homepage": "https://github.com/Saisai568/yoin#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "crdt",
     "collaboration",

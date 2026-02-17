@@ -4,7 +4,7 @@
 // ============================================================
 
 // WASM Initialization
-export { initYoin, isYoinInitialized } from './wasm/loader';
+export { initYoin, isYoinInitialized, YoinInitError } from './wasm/loader';
 
 // Core WASM types re-exported for convenience
 export { YoinDoc } from '@yoin/core';
@@ -33,3 +33,4 @@ export type {
   AwarenessCallback,
   NetworkStatus,
 } from './types';
+export type { NetworkProviderOptions } from './network';
