@@ -6,6 +6,7 @@ export default defineConfig([
     entry: {
       index: 'src/index.ts',
       react: 'src/react/index.tsx',
+      vite: 'src/vite.ts',
     },
     format: ['cjs', 'esm'],
     dts: {
@@ -18,6 +19,11 @@ export default defineConfig([
     external: [
       'react',
       'react-dom',
+      'vite-plugin-wasm',
+      'vite-plugin-top-level-await',
+      'vite',
+      'node:fs',
+      'node:path',
     ],
     // @yoin/core JS glue code is bundled; the .wasm binary is shipped
     // separately in dist/ and loaded at runtime via initYoin().

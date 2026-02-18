@@ -1,6 +1,6 @@
 {
   "name": "@yoin/client",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "description": "Yoin Framework - Real-time collaborative TypeScript SDK powered by CRDT and WASM",
   "main": "./dist/index.cjs",
@@ -16,6 +16,11 @@
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js",
       "require": "./dist/react.cjs"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js",
+      "require": "./dist/vite.cjs"
     }
   },
   "files": [
@@ -32,6 +37,9 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "vite": "^7.3.1",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.5.0",
     "zod": "^4.3.6"
   },
   "peerDependencies": {
@@ -43,9 +51,9 @@
     }
   },
   "devDependencies": {
-    "@yoin/core": "workspace:*",
     "@types/react": "^19.2.14",
     "@vitest/coverage-v8": "^4.0.18",
+    "@yoin/core": "workspace:*",
     "happy-dom": "^20.6.1",
     "react": "^19.2.4",
     "tsup": "^8.5.0",

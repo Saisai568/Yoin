@@ -1,6 +1,6 @@
 {
   "name": "@yoin/core",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "private": false,
   "description": "Yoin CRDT core - Rust/WASM bindings built with wasm-pack",

@@ -1,0 +1,12 @@
+# Exclude development files from npm package
+*.rs
+Cargo.toml
+Cargo.lock
+target/
+.git/
+.gitignore
+pkg/
+pkg-node/
+
+# Include only pkg-web (specified in package.json "files" field)
+
