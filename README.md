@@ -145,7 +145,9 @@ yoin/
 │           └── wasm/loader.ts   # WASM initializer
 ├── yoin-worker/        # Cloudflare Worker (Durable Objects WebSocket Relay)
 ├── apps/
-│   └── demo/           # Demo application (Vanilla JS + React)
+│   ├── demo/           # Demo application (Vanilla JS + React)
+│   └── api-test/       # Full-coverage API test runner (browser-based)
+│       └── src/main.ts # Tests all SDK APIs: Init / YoinClient / Text / Map / Array / Awareness / Network / Plugins       
 ├── server/             # Node.js development server
 ├── docs/               # Technical docs
 └── deploy.bat          # One-click full-stack deploy script
@@ -171,6 +173,12 @@ pnpm build
 
 # Start Demo dev server
 pnpm dev:demo
+
+# Start API Test app dev server
+pnpm dev:api-test
+
+# Build API Test app
+pnpm build:api-test
 
 # Run tests
 pnpm test            # Unit + integration tests

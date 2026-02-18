@@ -145,7 +145,9 @@ yoin/
 │           └── wasm/loader.ts   # WASM 初始化器
 ├── yoin-worker/        # Cloudflare Worker（Durable Objects WebSocket Relay）
 ├── apps/
-│   └── demo/           # 展示用 Demo（Vanilla JS + React）
+│   ├── demo/           # 展示用 Demo（Vanilla JS + React）
+│   └── api-test/       # 瀏覽器端 SDK 全功能 API 測試工具
+│       └── src/main.ts # 測試所有 SDK API：初始化 / YoinClient / Text / Map / Array / Awareness / 網路 / 插件      
 ├── server/             # Node.js 開發用伺服器
 ├── docs/               # 技術文件
 └── deploy.bat          # 一鍵全端部署腳本
@@ -171,6 +173,12 @@ pnpm build
 
 # 啟動 Demo 開發伺服器
 pnpm dev:demo
+
+# 啟動 API Test 開發伺服器
+pnpm dev:api-test
+
+# 建置 API Test 應用程式
+pnpm build:api-test
 
 # 執行測試
 pnpm test            # 單元 + 整合測試

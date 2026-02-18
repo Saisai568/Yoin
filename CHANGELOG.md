@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.1] - 2026-02-18
+
+### 🐛 Bug Fixes
+
+#### `YoinUndoPlugin` — auto-enable undo & auto-expand undo scope
+
+**Problem:** Installing `createUndoPlugin()` did not automatically enable undo tracking in the CRDT document, so calling `undo()` after `setMap()` had no effect unless the user manually called `doc.enable_undo()` and `doc.expand_undo_scope(mapName)`.
+
+**Fix:**
+
+- `onInstall()` now calls `doc.enable_undo()` automatically.
+- `client.setMap` and `client.setMapDeep` are wrapped so that the first write to any map name automatically calls `doc.expand_undo_scope(mapName)`. Subsequent writes to the same map are **idempotent** — `expand_undo_scope` is only called once per map name.
+- `onDestroy()` restores the original `setMap` / `setMapDeep` implementations so the plugin leaves no side-effects after removal.
+
+**Migration:** No API changes. Existing code that already called `doc.enable_undo()` / `doc.expand_undo_scope()` manually will continue to work correctly.
+
+---
+
 ## [0.1.0] - 2026-02-16
 
 ### 🎉 First Public Release

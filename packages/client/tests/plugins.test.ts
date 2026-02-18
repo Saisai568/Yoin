@@ -84,6 +84,103 @@ describe('createUndoPlugin', () => {
     client.use(undoPlugin.plugin);
     expect(() => undoPlugin.redo()).not.toThrow();
   });
+
+  it('onInstall should call doc.enable_undo()', () => {
+    const { plugin } = createUndoPlugin();
+    const doc = client.getDoc();
+    const enableUndoSpy = vi.spyOn(doc, 'enable_undo');
+    client.use(plugin);
+    expect(enableUndoSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('setMap should auto-call expand_undo_scope on first write to a map', async () => {
+    const { plugin } = createUndoPlugin();
+    client.use(plugin);
+    const doc = client.getDoc();
+    const expandSpy = vi.spyOn(doc, 'expand_undo_scope');
+
+    await client.setMap('myMap', 'key', 'value');
+    expect(expandSpy).toHaveBeenCalledWith('myMap');
+    expect(expandSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('setMap should only call expand_undo_scope once per map (idempotent)', async () => {
+    const { plugin } = createUndoPlugin();
+    client.use(plugin);
+    const doc = client.getDoc();
+    const expandSpy = vi.spyOn(doc, 'expand_undo_scope');
+
+    await client.setMap('myMap', 'key1', 'a');
+    await client.setMap('myMap', 'key2', 'b');
+    await client.setMap('myMap', 'key3', 'c');
+    expect(expandSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('setMap on different maps should each call expand_undo_scope once', async () => {
+    const { plugin } = createUndoPlugin();
+    client.use(plugin);
+    const doc = client.getDoc();
+    const expandSpy = vi.spyOn(doc, 'expand_undo_scope');
+
+    await client.setMap('mapA', 'key', 'val');
+    await client.setMap('mapB', 'key', 'val');
+    expect(expandSpy).toHaveBeenCalledWith('mapA');
+    expect(expandSpy).toHaveBeenCalledWith('mapB');
+    expect(expandSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('setMapDeep should auto-call expand_undo_scope on first write', () => {
+    const { plugin } = createUndoPlugin();
+    client.use(plugin);
+    const doc = client.getDoc();
+    const expandSpy = vi.spyOn(doc, 'expand_undo_scope');
+
+    client.setMapDeep('deepMap', ['a', 'b'], 'val');
+    expect(expandSpy).toHaveBeenCalledWith('deepMap');
+    expect(expandSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('setMapDeep should only call expand_undo_scope once per map (idempotent)', () => {
+    const { plugin } = createUndoPlugin();
+    client.use(plugin);
+    const doc = client.getDoc();
+    const expandSpy = vi.spyOn(doc, 'expand_undo_scope');
+
+    client.setMapDeep('deepMap', ['x'], 1);
+    client.setMapDeep('deepMap', ['y'], 2);
+    expect(expandSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('setMap followed by undo() should successfully revert the value', async () => {
+    const undoPlugin = createUndoPlugin();
+    client.use(undoPlugin.plugin);
+
+    await client.setMap('counter', 'n', 42);
+    const before = client.getMap('counter');
+    expect(before['n']).toBe(42);
+
+    undoPlugin.undo();
+
+    const after = client.getMap('counter');
+    expect(after['n']).toBeUndefined();
+  });
+
+  it('onDestroy should restore original setMap and setMapDeep', async () => {
+    const { plugin } = createUndoPlugin();
+    const origSetMap = client.setMap.bind(client);
+    client.use(plugin);
+
+    // setMap is now wrapped
+    expect(client.setMap).not.toBe(origSetMap);
+
+    plugin.onDestroy!();
+
+    // After destroy the wrapper is removed; original behaviour restored
+    const doc = client.getDoc();
+    const expandSpy = vi.spyOn(doc, 'expand_undo_scope');
+    await client.setMap('postDestroy', 'k', 'v');
+    expect(expandSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('createLoggerPlugin', () => {

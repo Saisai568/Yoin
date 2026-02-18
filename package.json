@@ -12,6 +12,8 @@
     "deploy:pages": "pnpm build && pnpm --filter @yoin/demo run deploy",
     "deploy": "pnpm build && pnpm deploy:worker && pnpm --filter @yoin/demo run deploy",
     "dev:demo": "pnpm --filter @yoin/demo dev",
+    "dev:api-test": "pnpm --filter @yoin/api-test dev",
+    "build:api-test": "pnpm --filter @yoin/api-test build",
     "test": "pnpm --filter @yoin/client test && node tests/monorepo-integrity.test.mjs",
     "test:unit": "pnpm --filter @yoin/client test",
     "test:integration": "node tests/monorepo-integrity.test.mjs",
