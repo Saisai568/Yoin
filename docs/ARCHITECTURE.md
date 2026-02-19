@@ -450,7 +450,7 @@ t=30   throttle 到期   → 廣播最新 pending (trailing edge)
 ```yaml
 packages:
   - packages/*    # @yoin/core, @yoin/client
-  - apps/*        # @yoin/demo
+  - apps/*        # @yoin/demo, @yoin/api-test
   - yoin-worker   # Cloudflare Worker
 ```
 

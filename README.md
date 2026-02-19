@@ -7,6 +7,7 @@
 [![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/Saisai568/yoin/releases/tag/v0.1.0)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-89%20passed-success.svg)](packages/client/tests)
+[![Yoin](public/logo_1.png)](public/logo_1.png)
 
 Yoin is a CRDT-based real-time collaboration framework that lets developers add multiplayer real-time sync to any application in just a few lines of code. The core engine is written in Rust and runs in the browser via WebAssembly, paired with Cloudflare Durable Objects for WebSocket relay — delivering low-latency, offline-capable, auto-merging collaborative experiences.
 
