@@ -5,6 +5,12 @@ import {
   createMapProxy, createArrayProxy,
 } from '@yoin/client';
 
+const workerUrl = import.meta.env.VITE_YOIN_WORKER_URL;
+
+if (!workerUrl) {
+  throw new Error('VITE_YOIN_WORKER_URL is not set');
+}
+
 // ============================================================
 // Yoin API 全功能測試
 // ============================================================
@@ -62,7 +68,7 @@ async function main() {
   let client: YoinClient;
   try {
     client = new YoinClient({
-      url: 'wss://yoin-worker.saiguanen.workers.dev',
+      url: workerUrl,
       docId: room,
     });
     ok('new YoinClient()', `docId = ${room}`);

@@ -7,6 +7,12 @@ import { App } from './App';
 import { z } from 'zod'; // Zod Schema
 import './style.css';
 
+const workerUrl = import.meta.env.VITE_YOIN_WORKER_URL;
+
+if (!workerUrl) {
+    throw new Error('VITE_YOIN_WORKER_URL is not set');
+}
+
 async function bootstrap() {
     console.log("Initializing Yoin Engine...");
     await initYoin();
@@ -16,7 +22,7 @@ async function bootstrap() {
     const room = urlParams.get('room') || 'react-demo';
 
     const client = new YoinClient({
-        url: 'wss://yoin-worker.saiguanen.workers.dev',
+        url: workerUrl,
         docId: room,
         dbName: `YoinReactDB-${room}`,
         awarenessThrottleMs: 30,

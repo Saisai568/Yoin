@@ -13,6 +13,12 @@ import { createDefaultCursor, createEmojiCursor, createAvatar } from './renderer
 import { z } from 'zod';
 import './style.css';
 
+const workerUrl = import.meta.env.VITE_YOIN_WORKER_URL;
+
+if (!workerUrl) {
+    throw new Error('VITE_YOIN_WORKER_URL is not set');
+}
+
 // ==========================================
 // Tool function log: output to the page and console at the same time
 // ==========================================
@@ -42,7 +48,7 @@ async function bootstrap() {
     // Micro-kernel
     // ==========================================
     const client = new YoinClient({
-        url: 'wss://yoin-worker.saiguanen.workers.dev', // Please confirm your Worker URL
+        url: workerUrl,
         docId: currentRoom,
         awarenessThrottleMs: 30,
         heartbeatIntervalMs: 5000,

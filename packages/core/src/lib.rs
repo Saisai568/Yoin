@@ -338,7 +338,7 @@ impl YoinDoc {
     // ==========================================
 
     pub fn apply_update(&self, update: &[u8]) {
-        // 🔥 IMPORTANT: Use origin_remote() so UndoManager ignores these
+        // IMPORTANT: Use origin_remote() so UndoManager ignores these
         let mut txn = self.doc.transact_mut_with(origin_remote());
         if let Ok(update) = Update::decode_v1(update) {
             txn.apply_update(update);
