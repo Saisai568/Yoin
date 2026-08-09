@@ -18,6 +18,8 @@ docs_self/
 
 # Node (Client & Server)
 node_modules/
+.npm-cache/
+.pnpm-store/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

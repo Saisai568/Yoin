@@ -100,7 +100,9 @@ export function useYoinAwareness() {
 
   const subscribe = useMemo(() => {
     return (callback: () => void) => {
-      return client.subscribe(callback);
+      // Awareness packets do not modify the CRDT document, so subscribing to
+      // document updates misses joins, leaves, and cursor/presence changes.
+      return client.onAwarenessChange(() => callback());
     };
   }, [client]);
 
