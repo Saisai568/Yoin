@@ -28,6 +28,7 @@ export class NetworkProvider {
   private onConnect: ConnectCallback;
   private onStatusChange: StatusCallback;
   private messageQueue: Uint8Array[] = [];
+  private inFlightMessages: Uint8Array[] = [];
 
   // Reconnection state
   private reconnectAttempts = 0;
@@ -65,15 +66,20 @@ export class NetworkProvider {
     this.socket = new WebSocket(this.url);
     this.socket.binaryType = 'arraybuffer';
 
-    this.socket.onopen = () => {
+    const socket = this.socket;
+    socket.onopen = () => {
       console.log('[Network] Connected to Sync Server');
       this.reconnectAttempts = 0; // Reset on successful connection
       this.onStatusChange('online');
 
       this.onConnect();
       if (this.messageQueue.length > 0) {
-        this.messageQueue.forEach((update) => this.socket?.send(update));
+        const queued = this.messageQueue;
         this.messageQueue = [];
+        queued.forEach((update) => this.sendOnSocket(socket, update));
+        if (socket.readyState === WebSocket.OPEN) {
+          this.inFlightMessages = [];
+        }
       }
     };
 
@@ -83,9 +89,17 @@ export class NetworkProvider {
       }
     };
 
-    this.socket.onclose = () => {
+    socket.onclose = () => {
       if (this.destroyed) return;
+      if (socket !== this.socket) return;
 
+      if (this.inFlightMessages.length > 0) {
+        this.messageQueue = [
+          ...this.inFlightMessages,
+          ...this.messageQueue,
+        ];
+        this.inFlightMessages = [];
+      }
       console.warn('[Network] Disconnected');
       this.onStatusChange('offline');
       this.scheduleReconnect();
@@ -136,12 +150,24 @@ export class NetworkProvider {
 
   public broadcast(update: Uint8Array): void {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-      this.socket.send(update);
+      this.sendOnSocket(this.socket, update);
     } else {
       console.warn(
         `[Network] Offline. Queuing update (${update.length} bytes)`,
       );
       this.messageQueue.push(update);
+    }
+  }
+
+  private sendOnSocket(socket: WebSocket, update: Uint8Array): void {
+    this.inFlightMessages.push(update);
+    try {
+      socket.send(update);
+    } catch (error) {
+      const index = this.inFlightMessages.indexOf(update);
+      if (index !== -1) this.inFlightMessages.splice(index, 1);
+      this.messageQueue.unshift(update);
+      throw error;
     }
   }
 
@@ -159,5 +185,6 @@ export class NetworkProvider {
       this.socket.close();
       this.socket = null;
     }
+    this.inFlightMessages = [];
   }
 }

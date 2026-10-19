@@ -15,6 +15,7 @@ export class YoinUndoPlugin implements YoinPlugin {
   /** Original setMap / setMapDeep, saved so onDestroy can restore them. */
   private _origSetMap?: (mapName: string, key: string, value: any) => Promise<void>;
   private _origSetMapDeep?: (mapName: string, path: string[], value: string | number | boolean) => void;
+  private _origPushArray?: (arrayName: string, item: any) => Promise<void>;
 
   onInstall(client: YoinClient): void {
     this.client = client;
@@ -44,6 +45,15 @@ export class YoinUndoPlugin implements YoinPlugin {
       return plugin._origSetMapDeep!(mapName, path, value);
     };
 
+    this._origPushArray = (client as any).pushArray.bind(client);
+    (client as any).pushArray = function (arrayName: string, item: any): Promise<void> {
+      if (!plugin.expandedMaps.has(arrayName)) {
+        plugin.doc.expand_undo_scope(arrayName);
+        plugin.expandedMaps.add(arrayName);
+      }
+      return plugin._origPushArray!(arrayName, item);
+    };
+
     console.log('[YoinUndoPlugin] Undo/Redo plugin installed');
   }
 
@@ -53,7 +63,6 @@ export class YoinUndoPlugin implements YoinPlugin {
 
       if (diff && diff.length > 0) {
         this.client.broadcastUpdate(diff);
-        this.client.notifyListeners();
 
         console.log('[YoinUndoPlugin] Undo applied');
       }
@@ -68,7 +77,6 @@ export class YoinUndoPlugin implements YoinPlugin {
 
       if (diff && diff.length > 0) {
         this.client.broadcastUpdate(diff);
-        this.client.notifyListeners();
 
         console.log('[YoinUndoPlugin] Redo applied');
       }
@@ -84,6 +92,9 @@ export class YoinUndoPlugin implements YoinPlugin {
     }
     if (this._origSetMapDeep) {
       (this.client as any).setMapDeep = this._origSetMapDeep;
+    }
+    if (this._origPushArray) {
+      (this.client as any).pushArray = this._origPushArray;
     }
     this.expandedMaps.clear();
     console.log('[YoinUndoPlugin] Destroyed');

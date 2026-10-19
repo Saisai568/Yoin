@@ -10,5 +10,5 @@ export interface YoinPlugin {
 
   onAfterUpdate?(update: Uint8Array): void;
 
-  onDestroy?(): void;
+  onDestroy?(): void | Promise<void>;
 }

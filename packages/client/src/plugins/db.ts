@@ -17,6 +17,8 @@ export class YoinDbPlugin implements YoinPlugin {
 
   private saveTimeout: number | undefined;
   private unsubDocUpdate?: () => void;
+  private readyPromise!: Promise<void>;
+  private destroyed = false;
 
   constructor(options: YoinDbPluginOptions) {
     this.storage = new StorageAdapter(options.dbName);
@@ -26,7 +28,10 @@ export class YoinDbPlugin implements YoinPlugin {
   onInstall(client: YoinClient): void {
     this.client = client;
 
-    this.loadFromDisk();
+    this.readyPromise = this.loadFromDisk().catch((error) => {
+      console.error('[YoinDbPlugin] Failed to restore from IndexedDB:', error);
+      throw error;
+    });
 
     this.unsubDocUpdate = client.onDocUpdate(() => {
       this.scheduleSave();
@@ -41,15 +46,17 @@ export class YoinDbPlugin implements YoinPlugin {
     this.scheduleSave();
   }
 
-  onDestroy(): void {
+  async onDestroy(): Promise<void> {
+    this.destroyed = true;
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
     if (this.unsubDocUpdate) this.unsubDocUpdate();
+    await this.persistWhenReady();
     console.log('[YoinDbPlugin] Destroyed');
   }
 
   public async forceSave(): Promise<void> {
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
-    await this.persist();
+    await this.persistWhenReady();
     console.log('[YoinDbPlugin] Force saved to IndexedDB');
   }
 
@@ -75,14 +82,23 @@ export class YoinDbPlugin implements YoinPlugin {
   }
 
   private scheduleSave(): void {
+    if (this.destroyed) return;
     if (this.saveTimeout) {
       clearTimeout(this.saveTimeout);
     }
 
-    this.saveTimeout = window.setTimeout(async () => {
-      await this.persist();
-      console.log('[YoinDbPlugin] Auto-saved to IndexedDB (Debounced)');
+    this.saveTimeout = window.setTimeout(() => {
+      void this.persistWhenReady().then(() => {
+        console.log('[YoinDbPlugin] Auto-saved to IndexedDB (Debounced)');
+      }).catch((error) => {
+        console.error('[YoinDbPlugin] Auto-save failed:', error);
+      });
     }, this.debounceMs);
+  }
+
+  private async persistWhenReady(): Promise<void> {
+    await this.readyPromise;
+    await this.persist();
   }
 }
 

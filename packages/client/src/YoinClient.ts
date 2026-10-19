@@ -209,9 +209,13 @@ export class YoinClient {
   }
 
   public broadcastUpdate(update: Uint8Array): void {
+    this.plugins.forEach((p) => p.onBeforeUpdate?.(update));
     const msg = this.encodeMessage(MSG_SYNC_STEP_2, update);
     this.network.broadcast(msg);
     this.notifyListeners();
+    this.plugins.forEach((p) => p.onAfterUpdate?.(update));
+    this.emitLocalUpdate(update);
+    this.emitDocUpdate(update);
   }
 
   // ==========================================
@@ -322,12 +326,14 @@ export class YoinClient {
   // ==========================================
   // Destroy
   // ==========================================
-  public destroy() {
+  public async destroy(): Promise<void> {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.gcTimer) clearInterval(this.gcTimer);
     if (this.awarenessTimeout) clearTimeout(this.awarenessTimeout);
 
-    this.plugins.forEach((p) => p.onDestroy?.());
+    for (const plugin of this.plugins) {
+      await plugin.onDestroy?.();
+    }
 
     this.leaveAwareness();
     this.network.disconnect();
@@ -533,17 +539,7 @@ export class YoinClient {
   // ==========================================
 
   private applyLocalUpdate(deltaUpdate: Uint8Array) {
-    this.plugins.forEach((p) => p.onBeforeUpdate?.(deltaUpdate));
-
-    const msg = this.encodeMessage(MSG_SYNC_STEP_2, deltaUpdate);
-    this.network.broadcast(msg);
-
-    this.notifyListeners();
-
-    this.plugins.forEach((p) => p.onAfterUpdate?.(deltaUpdate));
-
-    this.emitLocalUpdate(deltaUpdate);
-    this.emitDocUpdate(deltaUpdate);
+    this.broadcastUpdate(deltaUpdate);
   }
 
   // ==========================================

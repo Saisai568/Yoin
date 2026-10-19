@@ -165,6 +165,43 @@ describe('createUndoPlugin', () => {
     expect(after['n']).toBeUndefined();
   });
 
+  it('undo and redo should use the complete local update pipeline', async () => {
+    const undoPlugin = createUndoPlugin();
+    const before = vi.fn();
+    const after = vi.fn();
+    const localUpdates = vi.fn();
+    client.use({
+      name: 'pipeline-observer',
+      onInstall: vi.fn(),
+      onBeforeUpdate: before,
+      onAfterUpdate: after,
+    });
+    client.onLocalUpdate(localUpdates);
+    client.use(undoPlugin.plugin);
+
+    await client.setMap('counter', 'n', 42);
+    before.mockClear();
+    after.mockClear();
+    localUpdates.mockClear();
+
+    undoPlugin.undo();
+    undoPlugin.redo();
+
+    expect(before).toHaveBeenCalledTimes(2);
+    expect(after).toHaveBeenCalledTimes(2);
+    expect(localUpdates).toHaveBeenCalledTimes(2);
+  });
+
+  it('should expand undo scope for arrays', async () => {
+    const { plugin } = createUndoPlugin();
+    client.use(plugin);
+    const expandSpy = vi.spyOn(client.getDoc(), 'expand_undo_scope');
+
+    await client.pushArray('events', 'created');
+
+    expect(expandSpy).toHaveBeenCalledWith('events');
+  });
+
   it('onDestroy should restore original setMap and setMapDeep', async () => {
     const { plugin } = createUndoPlugin();
     const origSetMap = client.setMap.bind(client);

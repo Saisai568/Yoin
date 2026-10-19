@@ -181,6 +181,11 @@ packages/core/
 | **Blind Relay** | 伺服器不維護 CRDT 文件，收到二進制訊息直接轉發給同房間其他 WebSocket |
 | **Join Room 過濾** | `MSG_JOIN_ROOM (type=4)` 由 Server 攔截，不轉發 |
 
+> **安全邊界：** 目前 relay 是 public-room blind relay，不提供身份驗證、授權或文件持久化。
+> 任何取得 room URL 的客戶端都可讀寫該房間；不可用於需要存取控制的私密文件。
+> 部署受保護文件前，Worker 必須在 WebSocket upgrade 時驗證短期 token 與 room scope，
+> 並限制訊息型別、大小、頻率與每房間連線數。
+
 ### URL 路由
 
 支援兩種格式：
@@ -258,6 +263,42 @@ client.use(plugin)
         └─ plugin.onDestroy()        ← 清理
 ```
 
+### 測試架構與驗證分層
+
+測試命令必須由根目錄執行，確保新增測試會被 canonical suite 收集：
+
+```powershell
+pnpm test                 # client unit/integration seam + monorepo integrity
+pnpm test:unit            # packages/client 的 Vitest suite
+pnpm test:coverage        # Vitest V8 coverage
+pnpm test:integration     # workspace/package integrity checks
+```
+
+目前的測試分層如下：
+
+| 層級 | 工具 | 覆蓋範圍 | 外部依賴策略 |
+|---|---|---|---|
+| Unit | Vitest + happy-dom | client API、proxy、schema、awareness、network state machine | WebSocket、WASM 以 deterministic mocks 取代 |
+| Lifecycle integration seam | Vitest fake IndexedDB + plugin tests | restore-before-save、forceSave、async destroy、undo/redo hooks、offline resend | IndexedDB 用 fake adapter；錯誤/延遲由測試控制 |
+| Protocol seam | Vitest WebSocket fake | binary frame、reconnect、in-flight requeue、room sync handler | 不啟動外部 relay，直接注入 frame |
+| Core compile | `cargo check` | Rust/Yrs API 與 UndoManager 編譯正確性 | 不依賴瀏覽器 |
+| Browser/real integration | Playwright + 真實 WASM/IndexedDB/Worker | 多 client convergence、reload persistence、真實 relay ACL/rate limits | 尚未接入；需要產生 `pkg-web`、Worker source 與 browser binaries |
+
+測試必須至少覆蓋以下回歸保證：
+
+1. WebSocket 在 `send` 後斷線時，update 會在重連後重新送出。
+2. IndexedDB restore 未完成前，local write 不得先覆蓋或遺失；`destroy()` 必須等待最後一次 save。
+3. Undo/redo 必須觸發與一般 local update 相同的 plugin hooks、listeners 與 persistence events。
+4. map、text、array 的 undo scope 都必須可被註冊。
+5. 所有測試都必須在 command exit code 為 0 時才算通過；coverage 不得取代行為測試。
+
+### 測試限制與升級路徑
+
+- Docker daemon 不可用時，不能執行容器化 relay/Worker integration；不得因此宣稱多客戶端同步已驗證。
+- 目前 workspace 沒有 `yoin-worker` 原始碼，Worker 的 authentication、authorization、message validation、rate limit 測試必須在 Worker repository 補上。
+- clean checkout 若沒有 `packages/core/pkg-web`，client typecheck/build 會失敗；CI 應先執行 `pnpm build:wasm`，再執行 client typecheck/build。
+- 下一階段應新增真實 browser suite：兩個 client、真實 WASM、IndexedDB reload、relay close-after-send、同房間隔離與未授權 upgrade 測試。
+
 ### 資料流
 
 ```
@@ -274,8 +315,8 @@ YoinDoc (WASM) ── 執行 CRDT 操作 → 回傳增量 diff
     ├─ plugins.onBeforeUpdate(diff)
     │
     ├─ NetworkProvider.broadcast(message)
-    │   ├─ WebSocket 已連線 → 直接 send
-    │   └─ 離線 → 放入 messageQueue
+    │   ├─ WebSocket 已連線 → 直接 send（斷線事件會回收 in-flight 訊息）
+    │   └─ 離線 → 放入 messageQueue，重連後重送
     │
     ├─ notifyListeners() → UI 更新
     │

@@ -2,6 +2,15 @@
 
 ## 1. 發布前必須修復
 
+### 本次修復狀態（2026-10-19）
+
+| ID | 狀態 | 已完成內容 | 未完成邊界 |
+|---|---|---|---|
+| YOIN-001 | Client 已修復 | 斷線事件會回收 in-flight 訊息，重連後重送；加入 close-during-send 回歸測試 | relay ACK、durable queue 與跨頁面 crash recovery 仍需部署端協定/整合測試 |
+| YOIN-002 | 已修復 | DB restore 成為 save 前置條件；auto-save 錯誤可觀測；`forceSave` 與 async `destroy` 會等待 pending persistence | 真實 IndexedDB failure/delayed-load integration test 仍待補 |
+| YOIN-003 | 未修復（部署端） | 文件明確標示目前是 public blind relay，不可承載受保護文件 | 本 repository 沒有 `yoin-worker` 原始碼；token ACL、訊息驗證、rate/connection limits 需在 Worker repository 完成 |
+| YOIN-004 | Client/core 已修復 | undo/redo 使用完整 local update hooks；undo scope 涵蓋 map/text/array；array plugin 自動擴 scope | 真實 WASM + reload/multi-client convergence test 仍待補 |
+
 | 順序 | ID | 行動與預期改善 | 範圍/相依 | 風險與回歸測試 |
 |---|---|---|---|---|
 | 1 | YOIN-003 | 決定 public 或 protected room；protected 時加 token ACL、protocol validation、message/connection limits | Worker、文件；需先定產品安全模型 | 防止跨使用者讀寫；本地 unauthorized/unknown/high-rate tests |
@@ -30,4 +39,3 @@
 - 在沒有量測前優化 JSON serialization、WASM size 或 relay placement。
 - 要求 Proxy 支援所有 JavaScript 原生物件語意；應先決定最小明確 contract。
 - 將 awareness 的 transient protocol 改成 CRDT persistence；目前分離方向合理。
-

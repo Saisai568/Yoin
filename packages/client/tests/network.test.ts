@@ -112,6 +112,33 @@ describe('NetworkProvider', () => {
     expect(lastCreatedWs.sent.length).toBe(2);
   });
 
+  it('should requeue a message when the socket closes during send', () => {
+    const provider = new NetworkProvider(
+      'wss://test.com',
+      onConnect,
+      onMessage,
+      onStatus,
+      { baseDelayMs: 1, maxDelayMs: 1 },
+    );
+    const firstSocket = lastCreatedWs;
+    firstSocket.readyState = MockWebSocket.OPEN;
+    firstSocket.onopen?.({});
+    firstSocket.send = (data: any) => {
+      firstSocket.sent.push(data);
+      firstSocket.readyState = MockWebSocket.CLOSED;
+      firstSocket.onclose?.({});
+    };
+
+    provider.broadcast(new Uint8Array([7]));
+    vi.advanceTimersByTime(2);
+
+    const reconnectedSocket = lastCreatedWs;
+    reconnectedSocket.readyState = MockWebSocket.OPEN;
+    reconnectedSocket.onopen?.({});
+
+    expect(reconnectedSocket.sent).toContainEqual(new Uint8Array([7]));
+  });
+
   it('isConnected should be false initially', () => {
     const provider = new NetworkProvider('wss://test.com', onConnect, onMessage, onStatus);
     expect(provider.isConnected).toBe(false);

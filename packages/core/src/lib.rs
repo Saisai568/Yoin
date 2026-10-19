@@ -86,9 +86,12 @@ impl YoinDoc {
         self.ensure_undo_manager();
         let mut mgr = self.undo_manager.borrow_mut();
         if let Some(ref mut mgr) = *mgr {
-            // Try map first, then text, then array
             let map = self.doc.get_or_insert_map(type_name);
             mgr.expand_scope(&map);
+            let text = self.doc.get_or_insert_text(type_name);
+            mgr.expand_scope(&text);
+            let array = self.doc.get_or_insert_array(type_name);
+            mgr.expand_scope(&array);
         }
     }
 
