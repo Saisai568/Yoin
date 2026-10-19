@@ -1,7 +1,5 @@
 packages:
   - packages/*
-  - apps/*
-  - yoin-worker
 
 ignoredBuiltDependencies:
   - '@swc/core'

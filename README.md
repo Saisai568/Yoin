@@ -144,15 +144,11 @@ yoin/
 │           ├── logger.ts        # Development debug logging plugin
 │           ├── react/index.tsx  # React Hooks (Provider / useYoinMap / ...)
 │           └── wasm/loader.ts   # WASM initializer
-├── yoin-worker/        # Cloudflare Worker (Durable Objects WebSocket Relay)
-├── apps/
-│   ├── demo/           # Demo application (Vanilla JS + React)
-│   └── api-test/       # Full-coverage API test runner (browser-based)
-│       └── src/main.ts # Tests all SDK APIs: Init / YoinClient / Text / Map / Array / Awareness / Network / Plugins       
-├── server/             # Node.js development server
 ├── docs/               # Technical docs
-└── deploy.bat          # One-click full-stack deploy script
+└── tests/              # Core and package integration tests
 ```
+
+The example applications and Cloudflare Workers locate in a separate [`Yoin-apps-example`](../Yoin-apps-example/) repository. This repository contains `apps/`, `examples/`, `yoin-worker/`, `server/`, and deployment scripts, and links to the build artifacts of this core project via package files in `vendor/`.
 
 ## Development Guide
 
@@ -169,17 +165,8 @@ yoin/
 # Install dependencies
 pnpm install
 
-# Full build (WASM → SDK → Demo)
+# Core build (WASM → SDK)
 pnpm build
-
-# Start Demo dev server
-pnpm dev:demo
-
-# Start API Test app dev server
-pnpm dev:api-test
-
-# Build API Test app
-pnpm build:api-test
 
 # Run tests
 pnpm test            # Unit + integration tests
@@ -189,12 +176,12 @@ pnpm test:coverage   # Coverage report
 # Type checking
 pnpm typecheck
 
-# Full deploy
-.\deploy.bat         # Windows
-# Or deploy individually
-pnpm deploy:worker   # Deploy Worker only
-pnpm deploy:pages    # Build + deploy Pages
 ```
+
+For example startup instructions, please refer to the [`Yoin-apps-example`](https://github.com/Saisai568/Yoin-apps-example) repository;
+
+For example, you can execute `pnpm --filter yoin-worker dev` in that directory to start the Cloudflare
+Worker local development server.
 
 ## Tech Stack
 

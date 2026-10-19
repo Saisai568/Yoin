@@ -1,9 +1,9 @@
 // packages/client/src/vite.ts
 // ============================================================
-// Yoin Vite Plugin - 开箱即用的 Vite 配置
+// Yoin Vite Plugin
 // ============================================================
 //
-// 使用方法：
+// How to use:
 //
 //   import { defineConfig } from 'vite';
 //   import { yoinViteConfig } from '@yoin/client/vite';
@@ -77,11 +77,11 @@ function yoinWasmServePlugin(): Plugin {
 }
 
 /**
- * Yoin Vite 插件
+ * Yoin Vite plug-in
+ *
+ * Automatically configure Vite plugins and server WASM middleware required for WASM loading.
  * 
- * 自动配置 WASM 加载所需的 Vite 插件和服务器 WASM 中间件。
- * 
- * @returns Vite 插件数组
+ * @returns
  * 
  * @example
  * ```typescript
@@ -103,9 +103,9 @@ export function yoinVitePlugin(): Plugin[] {
 }
 
 /**
- * Yoin 所需的服务器配置
+ * Yoin Vite server configuration
  * 
- * @returns Vite 服务器配置对象
+ * @returns 
  * 
  * @example
  * ```typescript
@@ -132,9 +132,9 @@ export function yoinViteServerConfig() {
 }
 
 /**
- * Yoin 完整的 Vite 配置（插件 + 服务器配置）
+ * Yoin Vite configuration
  * 
- * @returns 包含插件和服务器配置的对象
+ * @returns 
  * 
  * @example
  * ```typescript

@@ -10,10 +10,12 @@
 - [`packages/client/src/plugins/undo.ts`](../../packages/client/src/plugins/undo.ts)：啟用 Yrs UndoManager 並 monkey-patch map writers。
 - [`packages/client/src/proxy.ts`](../../packages/client/src/proxy.ts)：Map/Array snapshot proxy。
 - [`packages/client/src/react/index.tsx`](../../packages/client/src/react/index.tsx)：Provider、map/array/awareness/status hooks。
-- [`yoin-worker/src/index.ts`](../../yoin-worker/src/index.ts)：room URL router 與 Durable Object blind relay。
-- [`apps/demo/`](../../apps/demo/)：Vite demo 及 Playwright specs；[`apps/api-test/`](../../apps/api-test/)：browser API test app。
+- [`yoin-worker/src/index.ts`](../../../Yoin-apps-example/yoin-worker/src/index.ts)：room URL router 與 Durable Object blind relay。
+- [`apps/demo/`](../../../Yoin-apps-example/apps/demo/)：Vite demo 及 Playwright specs；[`apps/api-test/`](../../../Yoin-apps-example/apps/api-test/)：browser API test app。
 
 相依方向是 core → client → demo；worker 不直接依賴 client/core。
+範例與 worker 位於獨立的 `Yoin-apps-example` repository，核心 repository
+只保留套件、文件與核心測試。
 
 ## 本地寫入資料流
 
@@ -44,4 +46,3 @@
 - 文件宣稱 public API/production-ready，但 E2E、WASM build、IndexedDB restore 和 relay security 尚未由現有測試證明。
 - `CHANGELOG.md` 曾宣稱所有 package 統一為 0.1.0，但目前 root 0.1.0、client/core 0.1.2、Cargo package 0.2.0。
 - API 文件列的 `NetworkStatus` 未包含程式實際使用的 `failed`。
-
