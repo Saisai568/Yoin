@@ -11,7 +11,9 @@ vi.mock('@yoin/core', () => import('./__mocks__/core'));
 vi.mock('../src/wasm/loader', () => ({
   isYoinInitialized: () => true,
   initYoin: async () => {},
-  YoinInitError: class YoinInitError extends Error { name = 'YoinInitError'; },
+  YoinInitError: class YoinInitError extends Error {
+    name = 'YoinInitError';
+  },
 }));
 
 class MockWebSocket {
@@ -34,8 +36,12 @@ class MockWebSocket {
       this.onopen?.({});
     }, 10);
   }
-  send(data: any) { this.sent.push(data); }
-  close() { this.readyState = MockWebSocket.CLOSED; }
+  send(data: any) {
+    this.sent.push(data);
+  }
+  close() {
+    this.readyState = MockWebSocket.CLOSED;
+  }
 }
 vi.stubGlobal('WebSocket', MockWebSocket);
 
@@ -51,8 +57,8 @@ describe('createUndoPlugin', () => {
     client = new YoinClient({ url: 'wss://test.example.com', docId: 'test' });
   });
 
-  afterEach(() => {
-    client.destroy();
+  afterEach(async () => {
+    await client.destroy();
     vi.useRealTimers();
   });
 
@@ -151,6 +157,28 @@ describe('createUndoPlugin', () => {
     expect(expandSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('batchSet and deleteMap should auto-expand undo scope and support undo/redo', async () => {
+    const undoPlugin = createUndoPlugin();
+    client.use(undoPlugin.plugin);
+    const expandSpy = vi.spyOn(client.getDoc(), 'expand_undo_scope');
+
+    client.batchSet([
+      ['whiteboard', 'shape1', { x: 0, y: 0 }],
+      ['whiteboard', 'shape2', { x: 10, y: 10 }],
+    ]);
+    expect(expandSpy).toHaveBeenCalledWith('whiteboard');
+    expect(Object.keys(client.getMap('whiteboard'))).toHaveLength(2);
+
+    await client.deleteMap('whiteboard', 'shape1');
+    expect(Object.keys(client.getMap('whiteboard'))).toEqual(['shape2']);
+
+    undoPlugin.undo();
+    expect(Object.keys(client.getMap('whiteboard'))).toEqual([
+      'shape1',
+      'shape2',
+    ]);
+  });
+
   it('setMap followed by undo() should successfully revert the value', async () => {
     const undoPlugin = createUndoPlugin();
     client.use(undoPlugin.plugin);
@@ -192,14 +220,19 @@ describe('createUndoPlugin', () => {
     expect(localUpdates).toHaveBeenCalledTimes(2);
   });
 
-  it('should expand undo scope for arrays', async () => {
-    const { plugin } = createUndoPlugin();
-    client.use(plugin);
+  it('should expand undo scope for arrays (push, insert, delete)', async () => {
+    const undoPlugin = createUndoPlugin();
+    client.use(undoPlugin.plugin);
     const expandSpy = vi.spyOn(client.getDoc(), 'expand_undo_scope');
 
     await client.pushArray('events', 'created');
-
     expect(expandSpy).toHaveBeenCalledWith('events');
+
+    await client.insertArray('events', 0, 'first');
+    expect(client.getArray('events')).toEqual(['first', 'created']);
+
+    undoPlugin.undo();
+    expect(client.getArray('events')).toEqual(['created']);
   });
 
   it('onDestroy should restore original setMap and setMapDeep', async () => {
@@ -226,14 +259,17 @@ describe('createLoggerPlugin', () => {
     expect(plugin.name).toBe('logger');
   });
 
-  it('should accept custom prefix', () => {
+  it('should accept custom prefix', async () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const plugin = createLoggerPlugin('[CustomPrefix]');
-    const client = new YoinClient({ url: 'wss://test.example.com', docId: 'test' });
+    const client = new YoinClient({
+      url: 'wss://test.example.com',
+      docId: 'test',
+    });
     plugin.onInstall(client);
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('[CustomPrefix]'));
     spy.mockRestore();
-    client.destroy();
+    await client.destroy();
   });
 
   it('should log on onBeforeUpdate', () => {

@@ -11,7 +11,9 @@ vi.mock('@yoin/core', () => import('./__mocks__/core'));
 vi.mock('../src/wasm/loader', () => ({
   isYoinInitialized: () => true,
   initYoin: async () => {},
-  YoinInitError: class YoinInitError extends Error { name = 'YoinInitError'; },
+  YoinInitError: class YoinInitError extends Error {
+    name = 'YoinInitError';
+  },
 }));
 
 class MockWebSocket {
@@ -34,8 +36,12 @@ class MockWebSocket {
       this.onopen?.({});
     }, 10);
   }
-  send(data: any) { this.sent.push(data); }
-  close() { this.readyState = MockWebSocket.CLOSED; }
+  send(data: any) {
+    this.sent.push(data);
+  }
+  close() {
+    this.readyState = MockWebSocket.CLOSED;
+  }
 }
 vi.stubGlobal('WebSocket', MockWebSocket);
 
@@ -50,8 +56,8 @@ describe('createMapProxy', () => {
     client = new YoinClient({ url: 'wss://test.example.com', docId: 'test' });
   });
 
-  afterEach(() => {
-    client.destroy();
+  afterEach(async () => {
+    await client.destroy();
     vi.useRealTimers();
   });
 
@@ -67,13 +73,40 @@ describe('createMapProxy', () => {
     expect(spy).toHaveBeenCalledWith('settings', 'theme', 'dark');
   });
 
-  it('reading a property should return value from getMap', async () => {
+  it('reading a property should return exact value and type from getMap', async () => {
     await client.setMap('settings', 'theme', 'dark');
-    const proxy = createMapProxy<{ theme: string }>(client, 'settings');
-    // The proxy's get triggers a deep proxy read
-    const value = proxy.theme;
-    // Value comes through DeepProxy which reads from map_get_all
-    expect(value).toBeDefined();
+    await client.setMap('settings', 'fontSize', 16);
+    const proxy = createMapProxy<{ theme: string; fontSize: number; missing?: string }>(
+      client,
+      'settings',
+    );
+    expect(proxy.theme).toBe('dark');
+    expect(proxy.fontSize).toBe(16);
+    expect(typeof proxy.fontSize).toBe('number');
+    expect(proxy.missing).toBeUndefined();
+    expect(proxy.missing ?? '#ffffff').toBe('#ffffff');
+  });
+
+  it('should support delete operator, in operator, and Object.keys()', async () => {
+    const proxy = createMapProxy<Record<string, any>>(client, 'whiteboard');
+    proxy.shape1 = { x: 10, y: 20 };
+    proxy.shape2 = { x: 30, y: 40 };
+
+    expect('shape1' in proxy).toBe(true);
+    expect(Object.keys(proxy)).toEqual(['shape1', 'shape2']);
+
+    delete proxy.shape1;
+    expect('shape1' in proxy).toBe(false);
+    expect(Object.keys(proxy)).toEqual(['shape2']);
+  });
+
+  it('should support deep nested proxy reads and writes via setMapDeep', async () => {
+    await client.setMap('settings', 'ui', { sidebar: { width: 240 } });
+    const proxy = createMapProxy<any>(client, 'settings');
+    expect(proxy.ui.sidebar.width).toBe(240);
+
+    proxy.ui.sidebar.width = 360;
+    expect(proxy.ui.sidebar.width).toBe(360);
   });
 
   it('toJSON should return metadata', () => {
@@ -93,8 +126,8 @@ describe('createArrayProxy', () => {
     client = new YoinClient({ url: 'wss://test.example.com', docId: 'test' });
   });
 
-  afterEach(() => {
-    client.destroy();
+  afterEach(async () => {
+    await client.destroy();
     vi.useRealTimers();
   });
 
@@ -104,11 +137,15 @@ describe('createArrayProxy', () => {
     expect(Array.isArray(proxy)).toBe(true);
   });
 
-  it('push should call pushArray on client', async () => {
+  it('push should call pushArray on client and immediately reflect in live length and elements', async () => {
     const spy = vi.spyOn(client, 'pushArray');
-    const proxy = createArrayProxy<string>(client, 'logs');
-    proxy.push('item1');
-    expect(spy).toHaveBeenCalledWith('logs', 'item1');
+    const proxy = createArrayProxy<{ action: string }>(client, 'logs');
+    expect(proxy.length).toBe(0);
+
+    proxy.push({ action: 'JOIN' });
+    expect(spy).toHaveBeenCalledWith('logs', { action: 'JOIN' });
+    expect(proxy.length).toBe(1);
+    expect(proxy[0]).toEqual({ action: 'JOIN' });
   });
 
   it('push should accept multiple items', async () => {
@@ -116,6 +153,21 @@ describe('createArrayProxy', () => {
     const proxy = createArrayProxy<string>(client, 'logs');
     proxy.push('a', 'b', 'c');
     expect(spy).toHaveBeenCalledTimes(3);
+    expect([...proxy]).toEqual(['a', 'b', 'c']);
+  });
+
+  it('should support splice, pop, shift, and unshift', () => {
+    const proxy = createArrayProxy<string>(client, 'cards');
+    proxy.push('card-1', 'card-2', 'card-3');
+
+    const removed = proxy.splice(1, 1, 'card-2-updated');
+    expect(removed).toEqual(['card-2']);
+    expect([...proxy]).toEqual(['card-1', 'card-2-updated', 'card-3']);
+
+    expect(proxy.pop()).toBe('card-3');
+    expect(proxy.shift()).toBe('card-1');
+    proxy.unshift('card-0');
+    expect([...proxy]).toEqual(['card-0', 'card-2-updated']);
   });
 
   it('should warn on index assignment', () => {

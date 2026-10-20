@@ -1,14 +1,17 @@
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encode, Encoder};
-use yrs::{Array, Doc, GetString, Map, MapPrelim, ReadTxn, StateVector, Text, Transact, Update, Origin};
-use yrs::types::{ToJson, Value};
+use yrs::{Any, Array, Doc, GetString, Map, MapPrelim, ReadTxn, StateVector, Text, Transact, Update, Origin};
+use yrs::types::{Attrs, ToJson, Value};
+use yrs::types::text::YChange;
 use yrs::updates::decoder::DecoderV1;
 use yrs::updates::encoder::EncoderV1;
 use yrs::undo::{UndoManager, Options};
 use std::collections::{HashMap, HashSet};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use serde::Serialize;
 extern crate console_error_panic_hook;
 use std::panic;
@@ -46,6 +49,64 @@ fn origin_remote() -> Origin {
 fn to_js_value(val: &impl Serialize) -> JsValue {
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
     val.serialize(&serializer).unwrap_or(JsValue::NULL)
+}
+
+/// Helper: convert any JsValue into yrs::Any preserving native types (string, f64, bool, null, Array, Object)
+fn js_to_any(val: &JsValue) -> Any {
+    if val.is_null() {
+        Any::Null
+    } else if val.is_undefined() {
+        Any::Undefined
+    } else if let Some(b) = val.as_bool() {
+        Any::Bool(b)
+    } else if let Some(n) = val.as_f64() {
+        Any::Number(n)
+    } else if let Some(s) = val.as_string() {
+        Any::String(s.into())
+    } else if js_sys::Array::is_array(val) {
+        let arr = js_sys::Array::from(val);
+        let mut vec = Vec::with_capacity(arr.length() as usize);
+        for i in 0..arr.length() {
+            vec.push(js_to_any(&arr.get(i)));
+        }
+        Any::Array(vec.into())
+    } else if val.is_object() {
+        let obj: &js_sys::Object = val.unchecked_ref();
+        let entries = js_sys::Object::entries(obj);
+        let mut map = HashMap::with_capacity(entries.length() as usize);
+        for i in 0..entries.length() {
+            let pair = js_sys::Array::from(&entries.get(i));
+            if let Some(k) = pair.get(0).as_string() {
+                map.insert(k, js_to_any(&pair.get(1)));
+            }
+        }
+        Any::Map(map.into())
+    } else {
+        Any::Null
+    }
+}
+
+/// Helper: convert a JS object of formatting attributes into yrs::types::Attrs
+fn js_to_attrs(attrs_val: &JsValue) -> Attrs {
+    let mut attrs: Attrs = HashMap::new();
+    if attrs_val.is_object() && !attrs_val.is_null() && !js_sys::Array::is_array(attrs_val) {
+        let obj: &js_sys::Object = attrs_val.unchecked_ref();
+        let entries = js_sys::Object::entries(obj);
+        for i in 0..entries.length() {
+            let pair = js_sys::Array::from(&entries.get(i));
+            if let Some(k) = pair.get(0).as_string() {
+                attrs.insert(Arc::from(k.as_str()), js_to_any(&pair.get(1)));
+            }
+        }
+    }
+    attrs
+}
+
+#[derive(Serialize)]
+struct DeltaOp {
+    insert: Any,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attributes: Option<HashMap<String, Any>>,
 }
 
 #[wasm_bindgen]
@@ -88,10 +149,29 @@ impl YoinDoc {
         if let Some(ref mut mgr) = *mgr {
             let map = self.doc.get_or_insert_map(type_name);
             mgr.expand_scope(&map);
-            let text = self.doc.get_or_insert_text(type_name);
-            mgr.expand_scope(&text);
-            let array = self.doc.get_or_insert_array(type_name);
-            mgr.expand_scope(&array);
+        }
+    }
+
+    /// Expand undo scope for a specific shared type kind ("map" | "text" | "array")
+    /// without colliding root branch types on the same key.
+    pub fn expand_undo_scope_for(&self, type_name: &str, kind: &str) {
+        self.ensure_undo_manager();
+        let mut mgr = self.undo_manager.borrow_mut();
+        if let Some(ref mut mgr) = *mgr {
+            match kind {
+                "text" => {
+                    let text = self.doc.get_or_insert_text(type_name);
+                    mgr.expand_scope(&text);
+                }
+                "array" => {
+                    let array = self.doc.get_or_insert_array(type_name);
+                    mgr.expand_scope(&array);
+                }
+                _ => {
+                    let map = self.doc.get_or_insert_map(type_name);
+                    mgr.expand_scope(&map);
+                }
+            }
         }
     }
 
@@ -159,6 +239,76 @@ impl YoinDoc {
         Ok(self.doc.transact().encode_diff_v1(&sv_before))
     }
 
+    /// Insert rich text with formatting attributes (e.g., { bold: true, color: "#ff0000" })
+    pub fn insert_text_with_attrs(&self, name: &str, index: u32, chunk: &str, attrs: JsValue) -> Result<Vec<u8>, JsValue> {
+        let sv_before = self.doc.transact().state_vector();
+        {
+            let text = self.doc.get_or_insert_text(name);
+            let mut txn = self.doc.transact_mut_with(origin_local());
+            let yrs_attrs = js_to_attrs(&attrs);
+            text.insert_with_attributes(&mut txn, index, chunk, yrs_attrs);
+        }
+        Ok(self.doc.transact().encode_diff_v1(&sv_before))
+    }
+
+    /// Format an existing range of text with attributes (Quill/Tiptap compatible)
+    pub fn format_text(&self, name: &str, index: u32, length: u32, attrs: JsValue) -> Result<Vec<u8>, JsValue> {
+        let sv_before = self.doc.transact().state_vector();
+        {
+            let text = self.doc.get_or_insert_text(name);
+            let mut txn = self.doc.transact_mut_with(origin_local());
+            let yrs_attrs = js_to_attrs(&attrs);
+            text.format(&mut txn, index, length, yrs_attrs);
+        }
+        Ok(self.doc.transact().encode_diff_v1(&sv_before))
+    }
+
+    /// Apply a sequence of Quill-compatible Delta operations ({ insert?, delete?, retain?, attributes? })
+    /// in a single atomic transaction.
+    pub fn apply_text_delta(&self, name: &str, ops: js_sys::Array) -> Result<Vec<u8>, JsValue> {
+        let sv_before = self.doc.transact().state_vector();
+        {
+            let text = self.doc.get_or_insert_text(name);
+            let mut txn = self.doc.transact_mut_with(origin_local());
+            let mut cursor: u32 = 0;
+
+            for i in 0..ops.length() {
+                let op = ops.get(i);
+                if !op.is_object() || op.is_null() {
+                    continue;
+                }
+                let insert_val = js_sys::Reflect::get(&op, &JsValue::from_str("insert")).unwrap_or(JsValue::UNDEFINED);
+                let delete_val = js_sys::Reflect::get(&op, &JsValue::from_str("delete")).unwrap_or(JsValue::UNDEFINED);
+                let retain_val = js_sys::Reflect::get(&op, &JsValue::from_str("retain")).unwrap_or(JsValue::UNDEFINED);
+                let attrs_val = js_sys::Reflect::get(&op, &JsValue::from_str("attributes")).unwrap_or(JsValue::UNDEFINED);
+
+                if let Some(chunk) = insert_val.as_string() {
+                    let char_len = chunk.encode_utf16().count() as u32;
+                    if attrs_val.is_object() && !attrs_val.is_null() {
+                        let yrs_attrs = js_to_attrs(&attrs_val);
+                        text.insert_with_attributes(&mut txn, cursor, &chunk, yrs_attrs);
+                    } else {
+                        text.insert(&mut txn, cursor, &chunk);
+                    }
+                    cursor += char_len;
+                } else if let Some(del_len) = delete_val.as_f64() {
+                    let len = del_len as u32;
+                    if len > 0 {
+                        text.remove_range(&mut txn, cursor, len);
+                    }
+                } else if let Some(ret_len) = retain_val.as_f64() {
+                    let len = ret_len as u32;
+                    if len > 0 && attrs_val.is_object() && !attrs_val.is_null() {
+                        let yrs_attrs = js_to_attrs(&attrs_val);
+                        text.format(&mut txn, cursor, len, yrs_attrs);
+                    }
+                    cursor += len;
+                }
+            }
+        }
+        Ok(self.doc.transact().encode_diff_v1(&sv_before))
+    }
+
     pub fn delete_text(&self, name: &str, index: u32, length: u32) -> Result<Vec<u8>, JsValue> {
         let sv_before = self.doc.transact().state_vector();
         {
@@ -169,12 +319,22 @@ impl YoinDoc {
         Ok(self.doc.transact().encode_diff_v1(&sv_before))
     }
 
-    pub fn map_set(&self, map_name: &str, key: &str, value: &str) -> Result<Vec<u8>, JsValue> {
+    pub fn map_set(&self, map_name: &str, key: &str, value: JsValue) -> Result<Vec<u8>, JsValue> {
         let sv_before = self.doc.transact().state_vector();
         {
             let map = self.doc.get_or_insert_map(map_name);
             let mut txn = self.doc.transact_mut_with(origin_local());
-            map.insert(&mut txn, key, value);
+            map.insert(&mut txn, key, js_to_any(&value));
+        }
+        Ok(self.doc.transact().encode_diff_v1(&sv_before))
+    }
+
+    pub fn map_delete(&self, map_name: &str, key: &str) -> Result<Vec<u8>, JsValue> {
+        let sv_before = self.doc.transact().state_vector();
+        {
+            let map = self.doc.get_or_insert_map(map_name);
+            let mut txn = self.doc.transact_mut_with(origin_local());
+            map.remove(&mut txn, key);
         }
         Ok(self.doc.transact().encode_diff_v1(&sv_before))
     }
@@ -212,15 +372,7 @@ impl YoinDoc {
             let last_key_js = path.get(path_len - 1);
             let last_key = last_key_js.as_string().ok_or_else(|| JsValue::from_str("Last path element must be a string"))?;
 
-            if let Some(s) = value.as_string() {
-                current_map.insert(&mut txn, last_key, s);
-            } else if let Some(n) = value.as_f64() {
-                current_map.insert(&mut txn, last_key, n);
-            } else if let Some(b) = value.as_bool() {
-                current_map.insert(&mut txn, last_key, b);
-            } else {
-                return Err(JsValue::from_str("Unsupported type for deep set"));
-            }
+            current_map.insert(&mut txn, last_key, js_to_any(&value));
         }
 
         let diff = self.doc.transact().encode_diff_v1(&sv_before);
@@ -237,7 +389,7 @@ impl YoinDoc {
         struct BatchEntry {
             map: yrs::MapRef,
             key: String,
-            val: JsValue,
+            val: Any,
         }
 
         let mut batch: Vec<BatchEntry> = Vec::new();
@@ -250,7 +402,7 @@ impl YoinDoc {
                 .ok_or_else(|| JsValue::from_str("mapName must be a string"))?;
             let key = entry.get(1).as_string()
                 .ok_or_else(|| JsValue::from_str("key must be a string"))?;
-            let val = entry.get(2);
+            let val = js_to_any(&entry.get(2));
             let map = self.doc.get_or_insert_map(&*map_name);
             batch.push(BatchEntry { map, key, val });
         }
@@ -258,29 +410,38 @@ impl YoinDoc {
         {
             let mut txn = self.doc.transact_mut_with(origin_local());
             for e in batch {
-                if let Some(s) = e.val.as_string() {
-                    e.map.insert(&mut txn, e.key, s);
-                } else if let Some(n) = e.val.as_f64() {
-                    e.map.insert(&mut txn, e.key, n);
-                } else if let Some(b) = e.val.as_bool() {
-                    e.map.insert(&mut txn, e.key, b);
-                } else {
-                    let s = js_sys::JSON::stringify(&e.val)
-                        .map(|js_str| js_str.as_string().unwrap_or_default())
-                        .unwrap_or_default();
-                    e.map.insert(&mut txn, e.key, s);
-                }
+                e.map.insert(&mut txn, e.key, e.val);
             }
         }
         Ok(self.doc.transact().encode_diff_v1(&sv_before))
     }
 
-    pub fn array_push(&self, array_name: &str, value: &str) -> Result<Vec<u8>, JsValue> {
+    pub fn array_push(&self, array_name: &str, value: JsValue) -> Result<Vec<u8>, JsValue> {
         let sv_before = self.doc.transact().state_vector();
         {
             let arr = self.doc.get_or_insert_array(array_name);
             let mut txn = self.doc.transact_mut_with(origin_local());
-            arr.push_back(&mut txn, value);
+            arr.push_back(&mut txn, js_to_any(&value));
+        }
+        Ok(self.doc.transact().encode_diff_v1(&sv_before))
+    }
+
+    pub fn array_insert(&self, array_name: &str, index: u32, value: JsValue) -> Result<Vec<u8>, JsValue> {
+        let sv_before = self.doc.transact().state_vector();
+        {
+            let arr = self.doc.get_or_insert_array(array_name);
+            let mut txn = self.doc.transact_mut_with(origin_local());
+            arr.insert(&mut txn, index, js_to_any(&value));
+        }
+        Ok(self.doc.transact().encode_diff_v1(&sv_before))
+    }
+
+    pub fn array_delete(&self, array_name: &str, index: u32, length: u32) -> Result<Vec<u8>, JsValue> {
+        let sv_before = self.doc.transact().state_vector();
+        {
+            let arr = self.doc.get_or_insert_array(array_name);
+            let mut txn = self.doc.transact_mut_with(origin_local());
+            arr.remove_range(&mut txn, index, length);
         }
         Ok(self.doc.transact().encode_diff_v1(&sv_before))
     }
@@ -293,6 +454,27 @@ impl YoinDoc {
         let text = self.doc.get_or_insert_text(name);
         let txn = self.doc.transact();
         text.get_string(&txn)
+    }
+
+    /// Returns Quill-compatible Delta array: [{ insert: string, attributes?: Record<string, any> }]
+    pub fn get_text_delta(&self, name: &str) -> JsValue {
+        let text = self.doc.get_or_insert_text(name);
+        let txn = self.doc.transact();
+        let diffs = text.diff(&txn, YChange::identity);
+        let ops: Vec<DeltaOp> = diffs
+            .into_iter()
+            .map(|d| {
+                let insert = d.insert.to_json(&txn);
+                let attributes = d.attributes.map(|boxed| {
+                    boxed
+                        .into_iter()
+                        .map(|(k, v)| (k.to_string(), v))
+                        .collect::<HashMap<String, Any>>()
+                });
+                DeltaOp { insert, attributes }
+            })
+            .collect();
+        to_js_value(&ops)
     }
 
     /// Returns native JS object directly via serde-wasm-bindgen (no JSON stringify/parse)

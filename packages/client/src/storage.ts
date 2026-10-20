@@ -3,16 +3,22 @@
 export class StorageAdapter {
   private dbName: string;
   private storeName: string = 'documents';
+  private dbPromise: Promise<IDBDatabase> | null = null;
 
   constructor(dbName: string) {
     this.dbName = dbName;
   }
 
   private openDB(): Promise<IDBDatabase> {
-    return new Promise((resolve, reject) => {
+    if (this.dbPromise) return this.dbPromise;
+
+    this.dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(this.dbName, 1);
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        this.dbPromise = null;
+        reject(request.error);
+      };
       request.onsuccess = () => resolve(request.result);
 
       request.onupgradeneeded = (event) => {
@@ -23,6 +29,8 @@ export class StorageAdapter {
         }
       };
     });
+
+    return this.dbPromise;
   }
 
   public async save(docId: string, data: Uint8Array): Promise<void> {
@@ -50,7 +58,7 @@ export class StorageAdapter {
         const result = request.result;
         if (result) {
           if (result instanceof Uint8Array) {
-            resolve(result);
+            resolve(new Uint8Array(result));
           } else {
             resolve(new Uint8Array(result));
           }
@@ -60,5 +68,18 @@ export class StorageAdapter {
       };
       request.onerror = () => reject(request.error);
     });
+  }
+
+  public async close(): Promise<void> {
+    if (this.dbPromise) {
+      try {
+        const db = await this.dbPromise;
+        db.close?.();
+      } catch {
+        // Ignore open error during close
+      } finally {
+        this.dbPromise = null;
+      }
+    }
   }
 }

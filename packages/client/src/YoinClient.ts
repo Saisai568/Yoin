@@ -1,6 +1,6 @@
 // packages/client/src/YoinClient.ts
 // ============================================================
-// Micro-kernel Core - CRDT Doc, Networking, Map/Array API
+// Micro-kernel Core - CRDT Doc, Networking, Text/Map/Array API
 // ============================================================
 import { YoinDoc } from '@yoin/core';
 import { NetworkProvider } from './network';
@@ -8,6 +8,7 @@ import { isYoinInitialized } from './wasm/loader';
 import type { YoinPlugin } from './plugin';
 import type {
   YoinConfig,
+  TextDeltaOp,
   AwarenessState,
   AwarenessPartial,
   AwarenessCallback,
@@ -24,6 +25,11 @@ const MSG_SYNC_STEP_1_REPLY = 2;
 const MSG_AWARENESS = 3;
 const MSG_JOIN_ROOM = 4;
 
+interface UpdateScope {
+  kind: 'text' | 'map' | 'array';
+  name: string;
+}
+
 // ============================================================
 // Micro-kernel Core
 // ============================================================
@@ -32,8 +38,16 @@ export class YoinClient {
   public network: NetworkProvider;
   private config: YoinConfig;
 
-  // CRDT Text Subscriber (React/UI)
+  // Global / Text Subscribers (React/UI)
   private listeners: ((text: string) => void)[] = [];
+
+  // Fine-grained Container Subscribers (for 60FPS Whiteboard / Kanban / Rich Text)
+  private mapListeners: Map<string, Set<(data: any) => void>> = new Map();
+  private arrayListeners: Map<string, Set<(data: any[]) => void>> = new Map();
+  private textListeners: Map<
+    string,
+    Set<(text: string, delta: TextDeltaOp[]) => void>
+  > = new Map();
 
   // Schema Validation Rules
   private schemas: Record<string, z.ZodTypeAny> | undefined;
@@ -51,12 +65,12 @@ export class YoinClient {
   private awarenessListeners: AwarenessCallback[] = [];
 
   // Throttle Mechanism
-  private awarenessTimeout: number | undefined;
+  private awarenessTimeout: ReturnType<typeof setTimeout> | undefined;
   private pendingAwarenessUpdate: boolean = false;
 
   // Heartbeat Timer
-  private heartbeatTimer: number | undefined;
-  private gcTimer: number | undefined;
+  private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  private gcTimer: ReturnType<typeof setInterval> | undefined;
 
   private networkListeners: ((status: NetworkStatus) => void)[] = [];
 
@@ -91,11 +105,10 @@ export class YoinClient {
         const roomNameBytes = new TextEncoder().encode(this.config.docId);
         this.network.broadcast(
           this.encodeMessage(MSG_JOIN_ROOM, roomNameBytes),
+          { transient: true },
         );
         console.log(`[Network] Joining room: ${this.config.docId}`);
-        const sv = this.doc.get_state_vector();
-        this.network.broadcast(this.encodeMessage(MSG_SYNC_STEP_1, sv));
-        console.log('[Sync] Sent initial State Vector');
+        this.syncWithPeers();
         const myState = this.awarenessStates.get(this.myClientId);
         if (myState) this.setAwareness({});
       },
@@ -108,12 +121,15 @@ export class YoinClient {
         switch (type) {
           case MSG_SYNC_STEP_1: {
             const diff = this.doc.export_diff(payload);
-            this.network.broadcast(
-              this.encodeMessage(MSG_SYNC_STEP_2, diff),
-            );
+            if (this.hasNonEmptyUpdate(diff)) {
+              this.network.broadcast(
+                this.encodeMessage(MSG_SYNC_STEP_2, diff),
+              );
+            }
             const mySV = this.doc.get_state_vector();
             this.network.broadcast(
               this.encodeMessage(MSG_SYNC_STEP_1_REPLY, mySV),
+              { transient: true },
             );
             const myState = this.awarenessStates.get(this.myClientId);
             if (myState) this.setAwareness({});
@@ -122,19 +138,23 @@ export class YoinClient {
 
           case MSG_SYNC_STEP_1_REPLY: {
             const diff = this.doc.export_diff(payload);
-            this.network.broadcast(
-              this.encodeMessage(MSG_SYNC_STEP_2, diff),
-            );
+            if (this.hasNonEmptyUpdate(diff)) {
+              this.network.broadcast(
+                this.encodeMessage(MSG_SYNC_STEP_2, diff),
+              );
+            }
             const myState = this.awarenessStates.get(this.myClientId);
             if (myState) this.setAwareness({});
             break;
           }
 
           case MSG_SYNC_STEP_2: {
-            this.doc.apply_update(payload);
-            this.notifyListeners();
-            this.plugins.forEach((p) => p.onAfterUpdate?.(payload));
-            this.emitDocUpdate(payload);
+            if (this.hasNonEmptyUpdate(payload)) {
+              this.doc.apply_update(payload);
+              this.notifyListeners();
+              this.plugins.forEach((p) => p.onAfterUpdate?.(payload));
+              this.emitDocUpdate(payload);
+            }
             break;
           }
 
@@ -160,9 +180,54 @@ export class YoinClient {
       (status) => {
         this.notifyNetworkListeners(status);
       },
+
+      config.networkOptions,
     );
 
     this.startHeartbeat();
+  }
+
+  /**
+   * Checks whether a binary CRDT update/diff actually contains operations.
+   * Suppresses empty 0-byte or 2-byte [0, 0] Yrs/Yjs V1 updates to prevent broadcast storms.
+   */
+  private hasNonEmptyUpdate(update: Uint8Array | null | undefined): boolean {
+    if (!update || update.byteLength === 0) return false;
+    if (update.byteLength === 2 && update[0] === 0 && update[1] === 0) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Initiates state vector synchronization with connected peers.
+   */
+  public syncWithPeers(): void {
+    const sv = this.doc.get_state_vector();
+    this.network.broadcast(
+      this.encodeMessage(MSG_SYNC_STEP_1, sv),
+      { transient: true },
+    );
+    console.log('[Sync] Sent initial State Vector');
+  }
+
+  /**
+   * Hydrate the document from a server-provided binary snapshot (e.g., PostgreSQL / Cloudflare DO).
+   * Compatible with both Yrs and Yjs V1 binary updates.
+   */
+  public applySnapshot(snapshot: Uint8Array): void {
+    if (!this.hasNonEmptyUpdate(snapshot)) return;
+    this.doc.apply_update(snapshot);
+    this.notifyListeners();
+    this.plugins.forEach((p) => p.onAfterUpdate?.(snapshot));
+    this.emitDocUpdate(snapshot);
+  }
+
+  /**
+   * Export full binary snapshot of the current document state.
+   */
+  public exportSnapshot(): Uint8Array {
+    return this.doc.snapshot() as Uint8Array;
   }
 
   // ==========================================
@@ -208,11 +273,18 @@ export class YoinClient {
     return this.config;
   }
 
-  public broadcastUpdate(update: Uint8Array): void {
+  public broadcastUpdate(
+    update: Uint8Array,
+    scopes?: UpdateScope | UpdateScope[],
+  ): void {
     this.plugins.forEach((p) => p.onBeforeUpdate?.(update));
     const msg = this.encodeMessage(MSG_SYNC_STEP_2, update);
     this.network.broadcast(msg);
-    this.notifyListeners();
+    if (scopes) {
+      this.notifyScopedListeners(scopes);
+    } else {
+      this.notifyListeners();
+    }
     this.plugins.forEach((p) => p.onAfterUpdate?.(update));
     this.emitLocalUpdate(update);
     this.emitDocUpdate(update);
@@ -238,7 +310,7 @@ export class YoinClient {
 
     if (!this.awarenessTimeout) {
       this.broadcastAwareness(fullState);
-      this.awarenessTimeout = window.setTimeout(() => {
+      this.awarenessTimeout = setTimeout(() => {
         this.awarenessTimeout = undefined;
         if (this.pendingAwarenessUpdate) {
           this.pendingAwarenessUpdate = false;
@@ -288,7 +360,9 @@ export class YoinClient {
   private broadcastAwareness(state: AwarenessState) {
     const jsonStr = JSON.stringify(state);
     const payload = new TextEncoder().encode(jsonStr);
-    this.network.broadcast(this.encodeMessage(MSG_AWARENESS, payload));
+    this.network.broadcast(this.encodeMessage(MSG_AWARENESS, payload), {
+      transient: true,
+    });
   }
 
   private startHeartbeat() {
@@ -297,14 +371,14 @@ export class YoinClient {
     const timeoutThreshold =
       this.config.heartbeatTimeoutMs ?? 30000;
 
-    this.heartbeatTimer = window.setInterval(() => {
+    this.heartbeatTimer = setInterval(() => {
       const myState = this.awarenessStates.get(this.myClientId);
       if (myState) {
         this.setAwareness({});
       }
     }, heartbeatInterval);
 
-    this.gcTimer = window.setInterval(() => {
+    this.gcTimer = setInterval(() => {
       const now = Date.now();
       let changed = false;
 
@@ -337,6 +411,7 @@ export class YoinClient {
 
     this.leaveAwareness();
     this.network.disconnect();
+    this.doc.free?.();
   }
 
   // ==========================================
@@ -349,8 +424,12 @@ export class YoinClient {
 
   public subscribeNetwork(
     callback: (status: NetworkStatus) => void,
-  ) {
+  ): () => void {
     this.networkListeners.push(callback);
+    return () => {
+      const idx = this.networkListeners.indexOf(callback);
+      if (idx !== -1) this.networkListeners.splice(idx, 1);
+    };
   }
 
   private notifyNetworkListeners(status: NetworkStatus) {
@@ -358,37 +437,97 @@ export class YoinClient {
   }
 
   // ==========================================
-  // Core CRDT API: Text
+  // Core CRDT API: Text & Rich Text (Quill / Tiptap)
   // ==========================================
 
-  public async insertText(index: number, text: string) {
-    const deltaUpdate = this.doc.insert_text(
-      'content',
-      index,
-      text,
-    ) as Uint8Array;
-    this.applyLocalUpdate(deltaUpdate);
+  public async insertText(
+    index: number,
+    text: string,
+    attributes?: Record<string, any>,
+    textName: string = 'content',
+  ): Promise<void> {
+    let deltaUpdate: Uint8Array;
+    if (
+      attributes &&
+      Object.keys(attributes).length > 0 &&
+      typeof (this.doc as any).insert_text_with_attrs === 'function'
+    ) {
+      deltaUpdate = (this.doc as any).insert_text_with_attrs(
+        textName,
+        index,
+        text,
+        attributes,
+      ) as Uint8Array;
+    } else {
+      deltaUpdate = this.doc.insert_text(
+        textName,
+        index,
+        text,
+      ) as Uint8Array;
+    }
+    this.applyLocalUpdate(deltaUpdate, { kind: 'text', name: textName });
   }
 
-  public async deleteText(index: number, length: number) {
+  public async formatText(
+    index: number,
+    length: number,
+    attributes: Record<string, any>,
+    textName: string = 'content',
+  ): Promise<void> {
+    if (length <= 0) return;
+    const deltaUpdate = (this.doc as any).format_text(
+      textName,
+      index,
+      length,
+      attributes,
+    ) as Uint8Array;
+    this.applyLocalUpdate(deltaUpdate, { kind: 'text', name: textName });
+  }
+
+  public async applyTextDelta(
+    ops: TextDeltaOp[],
+    textName: string = 'content',
+  ): Promise<void> {
+    if (!ops || ops.length === 0) return;
+    const deltaUpdate = (this.doc as any).apply_text_delta(
+      textName,
+      ops,
+    ) as Uint8Array;
+    this.applyLocalUpdate(deltaUpdate, { kind: 'text', name: textName });
+  }
+
+  public async deleteText(
+    index: number,
+    length: number,
+    textName: string = 'content',
+  ): Promise<void> {
     const deltaUpdate = this.doc.delete_text(
-      'content',
+      textName,
       index,
       length,
     ) as Uint8Array;
-    this.applyLocalUpdate(deltaUpdate);
+    this.applyLocalUpdate(deltaUpdate, { kind: 'text', name: textName });
   }
 
-  public async clearText() {
-    const currentText = this.getText();
+  public async clearText(textName: string = 'content'): Promise<void> {
+    const currentText = this.getText(textName);
     const length = currentText.length;
     if (length > 0) {
-      await this.deleteText(0, length);
+      await this.deleteText(0, length, textName);
     }
   }
 
-  public getText(): string {
-    return this.doc.get_text('content');
+  public getText(textName: string = 'content'): string {
+    return this.doc.get_text(textName);
+  }
+
+  public getTextDelta(textName: string = 'content'): TextDeltaOp[] {
+    if (typeof (this.doc as any).get_text_delta === 'function') {
+      const raw = (this.doc as any).get_text_delta(textName);
+      return Array.isArray(raw) ? raw : [];
+    }
+    const text = this.getText(textName);
+    return text ? [{ insert: text }] : [];
   }
 
   public subscribe(
@@ -400,122 +539,206 @@ export class YoinClient {
     };
   }
 
+  public subscribeText(
+    textName: string,
+    listener: (text: string, delta: TextDeltaOp[]) => void,
+  ): () => void {
+    let set = this.textListeners.get(textName);
+    if (!set) {
+      set = new Set();
+      this.textListeners.set(textName, set);
+    }
+    set.add(listener);
+    return () => {
+      set?.delete(listener);
+      if (set && set.size === 0) {
+        this.textListeners.delete(textName);
+      }
+    };
+  }
+
   // ==========================================
   // Core CRDT API: Map
   // ==========================================
 
-  public async setMap(mapName: string, key: string, value: any) {
+  public async setMap(
+    mapName: string,
+    key: string,
+    value: any,
+  ): Promise<void> {
     this.validateMap(mapName, key, value);
 
-    const valueStr =
-      typeof value === 'string' ? value : JSON.stringify(value);
-
-    const deltaUpdate = this.doc.map_set(
+    const deltaUpdate = (this.doc as any).map_set(
       mapName,
       key,
-      valueStr,
+      value,
     ) as Uint8Array;
-    this.applyLocalUpdate(deltaUpdate);
+    this.applyLocalUpdate(deltaUpdate, { kind: 'map', name: mapName });
   }
 
-  public getMap(mapName: string): Record<string, any> {
+  public async deleteMap(
+    mapName: string,
+    key: string,
+  ): Promise<void> {
+    const deltaUpdate = (this.doc as any).map_delete(
+      mapName,
+      key,
+    ) as Uint8Array;
+    this.applyLocalUpdate(deltaUpdate, { kind: 'map', name: mapName });
+  }
+
+  public async deleteMapKey(
+    mapName: string,
+    key: string,
+  ): Promise<void> {
+    return this.deleteMap(mapName, key);
+  }
+
+  public hasMapKey(mapName: string, key: string): boolean {
+    const map = this.getMap(mapName);
+    return Object.prototype.hasOwnProperty.call(map, key);
+  }
+
+  public getMap<T extends Record<string, any> = Record<string, any>>(
+    mapName: string,
+  ): T {
     try {
       const rawMap = this.doc.map_get_all(mapName) as Record<
         string,
         any
       > | null;
-      if (!rawMap || typeof rawMap !== 'object') return {};
-
-      const result: Record<string, any> = {};
-      for (const key in rawMap) {
-        const val = rawMap[key];
-        if (typeof val === 'string') {
-          try {
-            result[key] = JSON.parse(val);
-          } catch {
-            result[key] = val;
-          }
-        } else {
-          result[key] = val;
-        }
-      }
-      return result;
+      if (!rawMap || typeof rawMap !== 'object') return {} as T;
+      return { ...rawMap } as T;
     } catch (error) {
       console.warn(
         `[Yoin] Failed to read Map (${mapName}), returning empty state.`,
         error,
       );
-      return {};
+      return {} as T;
     }
   }
 
   public setMapDeep(
     mapName: string,
     path: string[],
-    value: string | number | boolean,
-  ) {
-    try {
-      const deltaUpdate = this.doc.map_set_deep(
-        mapName,
-        path,
-        value,
-      ) as Uint8Array;
-      this.applyLocalUpdate(deltaUpdate);
-    } catch (e) {
-      console.error('[Yoin] Deep Set Error:', e);
+    value: any,
+  ): void {
+    if (!path || path.length === 0) {
+      throw new Error('[Yoin] setMapDeep path cannot be empty');
     }
+    const deltaUpdate = this.doc.map_set_deep(
+      mapName,
+      path,
+      value,
+    ) as Uint8Array;
+    this.applyLocalUpdate(deltaUpdate, { kind: 'map', name: mapName });
   }
 
-  public batchSet(entries: [string, string, any][]) {
-    try {
-      const jsEntries = entries.map(([mapName, key, value]) => {
-        const v =
-          typeof value === 'string' ? value : JSON.stringify(value);
-        return [mapName, key, v];
-      });
-      const deltaUpdate = this.doc.batch_set(
-        jsEntries,
-      ) as Uint8Array;
-      this.applyLocalUpdate(deltaUpdate);
-    } catch (e) {
-      console.error('[Yoin] Batch Set Error:', e);
+  public batchSet(entries: [string, string, any][]): void {
+    if (!entries || entries.length === 0) return;
+
+    const affectedMaps = new Set<string>();
+    for (const [mapName, key, value] of entries) {
+      this.validateMap(mapName, key, value);
+      affectedMaps.add(mapName);
     }
+
+    const deltaUpdate = this.doc.batch_set(entries) as Uint8Array;
+    const scopes: UpdateScope[] = Array.from(affectedMaps).map((name) => ({
+      kind: 'map',
+      name,
+    }));
+    this.applyLocalUpdate(deltaUpdate, scopes);
+  }
+
+  public subscribeMap<T = Record<string, any>>(
+    mapName: string,
+    listener: (data: T) => void,
+  ): () => void {
+    let set = this.mapListeners.get(mapName);
+    if (!set) {
+      set = new Set();
+      this.mapListeners.set(mapName, set);
+    }
+    set.add(listener);
+    return () => {
+      set?.delete(listener);
+      if (set && set.size === 0) {
+        this.mapListeners.delete(mapName);
+      }
+    };
   }
 
   // ==========================================
   // Core CRDT API: Array
   // ==========================================
 
-  public async pushArray(arrayName: string, item: any) {
+  public async pushArray(arrayName: string, item: any): Promise<void> {
     this.validateArray(arrayName, item);
 
-    const valueStr =
-      typeof item === 'string' ? item : JSON.stringify(item);
-
-    const deltaUpdate = this.doc.array_push(
+    const deltaUpdate = (this.doc as any).array_push(
       arrayName,
-      valueStr,
+      item,
     ) as Uint8Array;
-    this.applyLocalUpdate(deltaUpdate);
+    this.applyLocalUpdate(deltaUpdate, { kind: 'array', name: arrayName });
   }
 
-  public getArray(arrayName: string): any[] {
+  public async insertArray(
+    arrayName: string,
+    index: number,
+    item: any,
+  ): Promise<void> {
+    this.validateArray(arrayName, item);
+
+    const deltaUpdate = (this.doc as any).array_insert(
+      arrayName,
+      index,
+      item,
+    ) as Uint8Array;
+    this.applyLocalUpdate(deltaUpdate, { kind: 'array', name: arrayName });
+  }
+
+  public async deleteArray(
+    arrayName: string,
+    index: number,
+    length: number = 1,
+  ): Promise<void> {
+    if (length <= 0) return;
+    const deltaUpdate = (this.doc as any).array_delete(
+      arrayName,
+      index,
+      length,
+    ) as Uint8Array;
+    this.applyLocalUpdate(deltaUpdate, { kind: 'array', name: arrayName });
+  }
+
+  public async moveArray(
+    arrayName: string,
+    fromIndex: number,
+    toIndex: number,
+  ): Promise<void> {
+    const current = this.getArray(arrayName);
+    if (
+      fromIndex < 0 ||
+      fromIndex >= current.length ||
+      toIndex < 0 ||
+      toIndex >= current.length ||
+      fromIndex === toIndex
+    ) {
+      return;
+    }
+    const item = current[fromIndex];
+    await this.deleteArray(arrayName, fromIndex, 1);
+    await this.insertArray(arrayName, toIndex, item);
+  }
+
+  public getArray<T = any>(arrayName: string): T[] {
     try {
       const rawArray = this.doc.array_get_all(
         arrayName,
-      ) as any[] | null;
+      ) as T[] | null;
       if (!rawArray || !Array.isArray(rawArray)) return [];
-
-      return rawArray.map((item) => {
-        if (typeof item === 'string') {
-          try {
-            return JSON.parse(item);
-          } catch {
-            return item;
-          }
-        }
-        return item;
-      });
+      return [...rawArray];
     } catch (error) {
       console.warn(
         `[Yoin] Failed to read Array (${arrayName})`,
@@ -525,21 +748,103 @@ export class YoinClient {
     }
   }
 
+  public subscribeArray<T = any>(
+    arrayName: string,
+    listener: (data: T[]) => void,
+  ): () => void {
+    let set = this.arrayListeners.get(arrayName);
+    if (!set) {
+      set = new Set();
+      this.arrayListeners.set(arrayName, set);
+    }
+    set.add(listener);
+    return () => {
+      set?.delete(listener);
+      if (set && set.size === 0) {
+        this.arrayListeners.delete(arrayName);
+      }
+    };
+  }
+
   // ==========================================
-  // public notifyListeners
+  // Notification Dispatchers
   // ==========================================
 
-  public notifyListeners() {
-    const text = this.getText();
-    this.listeners.forEach((listener) => listener(text));
+  /**
+   * Notifies all global and container-scoped listeners.
+   */
+  public notifyListeners(): void {
+    if (this.listeners.length > 0) {
+      const text = this.getText();
+      this.listeners.forEach((listener) => listener(text));
+    }
+
+    for (const [textName, set] of this.textListeners.entries()) {
+      if (set.size > 0) {
+        const text = this.getText(textName);
+        const delta = this.getTextDelta(textName);
+        set.forEach((fn) => fn(text, delta));
+      }
+    }
+
+    for (const [mapName, set] of this.mapListeners.entries()) {
+      if (set.size > 0) {
+        const data = this.getMap(mapName);
+        set.forEach((fn) => fn(data));
+      }
+    }
+
+    for (const [arrayName, set] of this.arrayListeners.entries()) {
+      if (set.size > 0) {
+        const data = this.getArray(arrayName);
+        set.forEach((fn) => fn(data));
+      }
+    }
+  }
+
+  /**
+   * Notifies only the listeners for the modified container(s) plus general `subscribe` listeners.
+   */
+  private notifyScopedListeners(scopes: UpdateScope | UpdateScope[]): void {
+    if (this.listeners.length > 0) {
+      const text = this.getText();
+      this.listeners.forEach((listener) => listener(text));
+    }
+
+    const list = Array.isArray(scopes) ? scopes : [scopes];
+    for (const scope of list) {
+      if (scope.kind === 'map') {
+        const set = this.mapListeners.get(scope.name);
+        if (set && set.size > 0) {
+          const data = this.getMap(scope.name);
+          set.forEach((fn) => fn(data));
+        }
+      } else if (scope.kind === 'array') {
+        const set = this.arrayListeners.get(scope.name);
+        if (set && set.size > 0) {
+          const data = this.getArray(scope.name);
+          set.forEach((fn) => fn(data));
+        }
+      } else if (scope.kind === 'text') {
+        const set = this.textListeners.get(scope.name);
+        if (set && set.size > 0) {
+          const text = this.getText(scope.name);
+          const delta = this.getTextDelta(scope.name);
+          set.forEach((fn) => fn(text, delta));
+        }
+      }
+    }
   }
 
   // ==========================================
   // Core Internal: Unified Local Update Process
   // ==========================================
 
-  private applyLocalUpdate(deltaUpdate: Uint8Array) {
-    this.broadcastUpdate(deltaUpdate);
+  private applyLocalUpdate(
+    deltaUpdate: Uint8Array,
+    scopes?: UpdateScope | UpdateScope[],
+  ): void {
+    this.broadcastUpdate(deltaUpdate, scopes);
   }
 
   // ==========================================
@@ -634,11 +939,11 @@ export class YoinClient {
   // ==========================================
 
   public map_get_all(mapName: string): any {
-    return this.doc.map_get_all(mapName);
+    return this.getMap(mapName);
   }
 
   public array_get_all(arrayName: string): any {
-    return this.doc.array_get_all(arrayName);
+    return this.getArray(arrayName);
   }
 
   public getAwarenessStates() {

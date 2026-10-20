@@ -1,5 +1,13 @@
 // packages/client/src/types.ts
 import { z } from 'zod';
+import type { NetworkProviderOptions } from './network';
+
+export interface TextDeltaOp {
+  insert?: string;
+  delete?: number;
+  retain?: number;
+  attributes?: Record<string, any>;
+}
 
 export interface YoinConfig {
   url: string;
@@ -9,6 +17,7 @@ export interface YoinConfig {
   heartbeatIntervalMs?: number;
   heartbeatTimeoutMs?: number;
   schemas?: Record<string, z.ZodTypeAny>;
+  networkOptions?: NetworkProviderOptions;
 }
 
 export interface AwarenessState {

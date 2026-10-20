@@ -2,24 +2,12 @@
 // ============================================================
 // WASM Loader - Handles WASM initialization across environments
 // ============================================================
-//
-// Usage in Vite projects:
-//
-//   import { initYoin } from '@yoin/client';
-//   await initYoin();
-//
-// If automatic URL resolution fails, pass the WASM URL explicitly:
-//
-//   import wasmUrl from '@yoin/core/core_bg.wasm?url';
-//   import { initYoin } from '@yoin/client';
-//   await initYoin(wasmUrl);
-//
-// ============================================================
 
 import initWasm, { init_panic_hook } from '@yoin/core';
 import type { InitInput } from '@yoin/core';
 
 let initialized = false;
+let initPromise: Promise<void> | null = null;
 
 // ============================================================
 // Custom Error class for init failures
@@ -55,6 +43,7 @@ export async function initYoin(
   retries = 3,
 ): Promise<void> {
   if (initialized) return;
+  if (initPromise) return initPromise;
 
   // Pre-flight: check WebAssembly support
   if (typeof WebAssembly === 'undefined') {
@@ -63,35 +52,40 @@ export async function initYoin(
     );
   }
 
-  let lastError: unknown;
+  initPromise = (async () => {
+    let lastError: unknown;
 
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      await initWasm(wasmInput);
-      init_panic_hook();
-      initialized = true;
-      console.log('[Yoin] WASM engine initialized successfully');
-      return;
-    } catch (error) {
-      lastError = error;
-      console.warn(
-        `[Yoin] WASM init attempt ${attempt}/${retries} failed:`,
-        error,
-      );
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        await initWasm(wasmInput);
+        init_panic_hook();
+        initialized = true;
+        console.log('[Yoin] WASM engine initialized successfully');
+        return;
+      } catch (error) {
+        lastError = error;
+        console.warn(
+          `[Yoin] WASM init attempt ${attempt}/${retries} failed:`,
+          error,
+        );
 
-      if (attempt < retries) {
-        // Incremental backoff: 500 → 1000 → 1500 ms …
-        const delay = attempt * 500;
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        if (attempt < retries) {
+          // Incremental backoff: 500 → 1000 → 1500 ms …
+          const delay = attempt * 500;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
       }
     }
-  }
 
-  throw new YoinInitError(
-    `Failed to initialize Yoin WASM engine after ${retries} attempts. ` +
-      'Ensure the .wasm file is accessible and the browser supports WebAssembly.',
-    lastError,
-  );
+    initPromise = null;
+    throw new YoinInitError(
+      `Failed to initialize Yoin WASM engine after ${retries} attempts. ` +
+        'Ensure the .wasm file is accessible and the browser supports WebAssembly.',
+      lastError,
+    );
+  })();
+
+  return initPromise;
 }
 
 /**

@@ -21,6 +21,14 @@ export interface NetworkProviderOptions {
   maxDelayMs?: number;
 }
 
+export interface BroadcastOptions {
+  /**
+   * When true, marks the packet as transient (e.g. Awareness / Heartbeat).
+   * Transient packets are dropped when offline instead of bloating the offline queue.
+   */
+  transient?: boolean;
+}
+
 export class NetworkProvider {
   private url: string;
   private socket: WebSocket | null = null;
@@ -57,6 +65,14 @@ export class NetworkProvider {
 
   public get isConnected(): boolean {
     return this.socket !== null && this.socket.readyState === WebSocket.OPEN;
+  }
+
+  public getQueueLength(): number {
+    return this.messageQueue.length;
+  }
+
+  public clearQueue(): void {
+    this.messageQueue = [];
   }
 
   private connect(): void {
@@ -128,7 +144,8 @@ export class NetworkProvider {
 
     this.reconnectAttempts++;
     // Exponential backoff with jitter, capped at maxDelayMs
-    const exponentialDelay = this.baseDelayMs * Math.pow(2, this.reconnectAttempts - 1);
+    const exponentialDelay =
+      this.baseDelayMs * Math.pow(2, this.reconnectAttempts - 1);
     const jitter = Math.random() * this.baseDelayMs * 0.5;
     const delay = Math.min(exponentialDelay + jitter, this.maxDelayMs);
 
@@ -148,10 +165,10 @@ export class NetworkProvider {
     this.connect();
   }
 
-  public broadcast(update: Uint8Array): void {
+  public broadcast(update: Uint8Array, options?: BroadcastOptions): void {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       this.sendOnSocket(this.socket, update);
-    } else {
+    } else if (!options?.transient) {
       console.warn(
         `[Network] Offline. Queuing update (${update.length} bytes)`,
       );

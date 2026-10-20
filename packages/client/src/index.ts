@@ -27,6 +27,7 @@ export { createMapProxy, createArrayProxy } from './proxy';
 // Types
 export type {
   YoinConfig,
+  TextDeltaOp,
   AwarenessState,
   AwarenessPartial,
   CursorRenderer,

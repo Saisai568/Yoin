@@ -15,7 +15,7 @@ export class YoinDbPlugin implements YoinPlugin {
   private storage: StorageAdapter;
   private debounceMs: number;
 
-  private saveTimeout: number | undefined;
+  private saveTimeout: ReturnType<typeof setTimeout> | undefined;
   private unsubDocUpdate?: () => void;
   private readyPromise!: Promise<void>;
   private destroyed = false;
@@ -42,15 +42,12 @@ export class YoinDbPlugin implements YoinPlugin {
     );
   }
 
-  onAfterUpdate(_update: Uint8Array): void {
-    this.scheduleSave();
-  }
-
   async onDestroy(): Promise<void> {
     this.destroyed = true;
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
     if (this.unsubDocUpdate) this.unsubDocUpdate();
     await this.persistWhenReady();
+    await (this.storage as StorageAdapter & { close?: () => Promise<void> }).close?.();
     console.log('[YoinDbPlugin] Destroyed');
   }
 
@@ -68,6 +65,10 @@ export class YoinDbPlugin implements YoinPlugin {
       console.log('[YoinDbPlugin] Found local data, applying...');
       this.client.getDoc().apply_update(data);
       this.client.notifyListeners();
+      // If network opened before IndexedDB restore completed, sync restored state with peers
+      if (this.client.network?.isConnected) {
+        this.client.syncWithPeers?.();
+      }
     } else {
       console.log(
         '[YoinDbPlugin] No local data found, starting fresh.',
@@ -87,12 +88,14 @@ export class YoinDbPlugin implements YoinPlugin {
       clearTimeout(this.saveTimeout);
     }
 
-    this.saveTimeout = window.setTimeout(() => {
-      void this.persistWhenReady().then(() => {
-        console.log('[YoinDbPlugin] Auto-saved to IndexedDB (Debounced)');
-      }).catch((error) => {
-        console.error('[YoinDbPlugin] Auto-save failed:', error);
-      });
+    this.saveTimeout = setTimeout(() => {
+      void this.persistWhenReady()
+        .then(() => {
+          console.log('[YoinDbPlugin] Auto-saved to IndexedDB (Debounced)');
+        })
+        .catch((error) => {
+          console.error('[YoinDbPlugin] Auto-save failed:', error);
+        });
     }, this.debounceMs);
   }
 
