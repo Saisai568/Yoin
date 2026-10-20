@@ -1,31 +1,46 @@
 [繁體中文](API.md) | [English](API_en.md)
 
-# Yoin API 文件
+# Yoin API 參考手冊
 
-> `@yoin/client` v0.1.0 — TypeScript SDK for Real-time Collaborative Applications
+> 版本：`@yoin/client` v0.1.2
 
 ## 目錄
 
 - [初始化](#初始化)
-- [YoinClient](#yoinclient)
-  - [建構函式](#建構函式)
-  - [Text API](#text-api)
-  - [Map API](#map-api)
-  - [Array API](#array-api)
+  - [`initYoin(wasmInput?)`](#inityoinwasminput)
+  - [`isYoinInitialized()`](#isyoininitialized)
+- [YoinClient 核心類別](#yoinclient-核心類別)
+  - [建構子與設定](#建構子與設定)
+  - [Text API（富文本與多文字容器）](#text-api富文本與多文字容器)
+  - [Map API（完整 CRUD 與原生型別保真）](#map-api完整-crud-與原生型別保真)
+  - [Array API（Push / Insert / Delete / Move）](#array-apipush--insert--delete--move)
+  - [容器級精準訂閱與生命週期](#容器級精準訂閱與生命週期)
+  - [伺服器快照預載與同步控制](#伺服器快照預載與同步控制)
+  - [Hook API（插件系統使用）](#hook-api插件系統使用)
   - [Awareness API](#awareness-api)
-  - [網路狀態](#網路狀態)
-  - [插件 API](#插件-api)
-  - [底層存取](#底層存取)
-  - [生命週期](#生命週期)
-- [Proxy 透明寫入](#proxy-透明寫入)
-- [Plugin 系統](#plugin-系統)
-  - [插件介面](#插件介面)
-  - [IndexedDB 持久化插件](#indexeddb-持久化插件)
-  - [Undo / Redo 插件](#undo--redo-插件)
-  - [Logger 插件](#logger-插件)
-  - [自訂插件](#自訂插件)
-- [React Hooks](#react-hooks)
-- [Schema 驗證](#schema-驗證)
+  - [存取器與工具方法](#存取器與工具方法)
+- [Proxy 透明讀寫](#proxy-透明讀寫)
+  - [`createMapProxy<T>(client, mapName)`](#createmapProxyTclient-mapname)
+  - [`createArrayProxy<T>(client, arrayName)`](#createarrayproxytclient-arrayname)
+- [插件系統](#插件系統)
+  - [`YoinPlugin` 介面](#yoinplugin-介面)
+  - [`createDbPlugin(options)` — IndexedDB 持久化](#createdbpluginoptions--indexeddb-持久化)
+  - [`createUndoPlugin()` — 復原/重做](#createundoplugin--復原重做)
+  - [`createLoggerPlugin(prefix?)` — 除錯日誌](#createloggerpluginprefix--除錯日誌)
+  - [自訂插件範例](#自訂插件範例)
+- [React Hooks (`@yoin/client/react`)](#react-hooks-yoinclientreact)
+  - [`<YoinProvider>`](#yoinprovider)
+  - [`useYoinClient()`](#useyoinclient)
+  - [`useYoinMap<T>(mapName)`](#useyoinmaptmapname)
+  - [`useYoinArray<T>(arrayName)`](#useyoinarraytarrayname)
+  - [`useYoinText(textName?)`](#useyointexttextname)
+  - [`useYoinAwareness()`](#useyoinawareness)
+  - [`useYoinStatus()`](#useyoinstatus)
+  - [`useYoinUndo()`](#useyoinundo)
+- [底層模組](#底層模組)
+  - [`NetworkManager`](#networkmanager)
+  - [`StorageAdapter`](#storageadapter)
+- [Schema 驗證（Zod 整合）](#schema-驗證zod-整合)
 - [型別定義](#型別定義)
 - [通訊協議](#通訊協議)
 
@@ -33,504 +48,522 @@
 
 ## 初始化
 
-使用任何 Yoin API 前，必須先載入 WASM 引擎：
-
-```typescript
-import { initYoin, isYoinInitialized } from '@yoin/client';
-
-await initYoin();          // 載入 WASM 模組（冪等，僅初始化一次）
-isYoinInitialized();       // => true
-```
+在使用任何 Yoin 功能之前，必須先載入並初始化底層的 Rust WebAssembly 引擎。
 
 ### `initYoin(wasmInput?)`
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `wasmInput` | `string \| URL \| BufferSource` | 可選。WASM 檔案路徑或二進制內容。省略時自動由 bundler 解析 |
+```typescript
+function initYoin(wasmInput?: unknown): Promise<void>
+```
 
-**回傳**：`Promise<void>`
+載入並初始化 Yoin 的 WASM CRDT 引擎。全域只需呼叫一次，重複呼叫是冪等的（直接回傳已完成的 Promise），同時具備並行鎖防止重複載入。
 
-> 在 Vite 專案中搭配 `vite-plugin-wasm` 可自動解析，無需手動傳入路徑。
+**參數**：
+- `wasmInput` *(選填)*：自訂的 WASM 模組來源（`RequestInfo | URL | Response | BufferSource | WebAssembly.Module`）。省略時使用套件內建的 `core_bg.wasm`。
+
+**範例**：
+
+```typescript
+import { initYoin } from '@yoin/client';
+
+// 標準用法 — 自動載入內建 WASM
+await initYoin();
+
+// 自訂 WASM 路徑（例如從 CDN 載入）
+await initYoin('https://cdn.example.com/core_bg.wasm');
+```
 
 ### `isYoinInitialized()`
 
-**回傳**：`boolean` — WASM 是否已就緒。
+```typescript
+function isYoinInitialized(): boolean
+```
+
+檢查 WASM 引擎是否已完成初始化。
 
 ---
 
-## YoinClient
+## YoinClient 核心類別
 
-SDK 的核心類別，管理 CRDT 文件、WebSocket 連線、Awareness 與插件系統。
+`YoinClient` 是 Yoin 的微核心（Micro-Kernel），負責管理 CRDT 文件實例、WebSocket 網路通訊、Awareness 感知狀態，以及插件生命週期。
 
-### 建構函式
+### 建構子與設定
 
 ```typescript
-import { YoinClient } from '@yoin/client';
-
-const client = new YoinClient({
-  url: 'wss://your-worker.workers.dev',
-  docId: 'my-document',
-  dbName: 'my-app',
-  awarenessThrottleMs: 30,
-  heartbeatIntervalMs: 5000,
-  heartbeatTimeoutMs: 30000,
-  schemas: { /* Zod schemas */ },
-});
+const client = new YoinClient(config: YoinConfig)
 ```
 
-#### `YoinConfig`
+> **注意**：建構 `YoinClient` 前必須先完成 `await initYoin()`，否則會拋出錯誤。
 
-| 屬性 | 型別 | 必填 | 預設 | 說明 |
-|------|------|------|------|------|
-| `url` | `string` | ✅ | — | WebSocket 伺服器 URL |
-| `docId` | `string` | ✅ | — | 文件 / 房間 ID |
-| `dbName` | `string` | — | — | IndexedDB 資料庫名稱（搭配 DbPlugin 使用） |
-| `awarenessThrottleMs` | `number` | — | `30` | Awareness 廣播節流間隔（ms） |
-| `heartbeatIntervalMs` | `number` | — | `5000` | 心跳發送間隔（ms） |
-| `heartbeatTimeoutMs` | `number` | — | `30000` | 遠端用戶超時清除閾值（ms） |
-| `schemas` | `Record<string, z.ZodTypeAny>` | — | — | Zod Schema 驗證規則 |
+**`YoinConfig` 介面**：
 
-建構時自動：
-1. 建立 `YoinDoc`（CRDT 文件）
-2. 建立 WebSocket 連線到 `url/room/{docId}`
-3. 執行三向交握同步（State Vector 交換）
-4. 啟動心跳計時器 + Ghost Busting GC
+| 屬性 | 型別 | 必填 | 預設值 | 說明 |
+|------|------|------|--------|------|
+| `url` | `string` | 是 | — | WebSocket 伺服器基礎網址（如 `'wss://yoin-worker.example.workers.dev'` 或 `'ws://localhost:8080'`） |
+| `docId` | `string` | 是 | — | 文件/房間的唯一識別碼。最終連線網址為 `${url}/${docId}` |
+| `dbName` | `string` | 否 | — | IndexedDB 資料庫名稱（搭配 `createDbPlugin` 使用） |
+| `awarenessThrottleMs` | `number` | 否 | `30` | Awareness 廣播節流間隔（毫秒），預設 ~33fps |
+| `heartbeatIntervalMs` | `number` | 否 | `5000` | Awareness 心跳廣播間隔（毫秒） |
+| `heartbeatTimeoutMs` | `number` | 否 | `30000` | 遠端客戶端無回應視為離線的逾時時間（毫秒） |
+| `schemas` | `Record<string, z.ZodTypeAny>` | 否 | — | Zod Schema 定義，用於寫入前自動驗證（詳見 [Schema 驗證](#schema-驗證zod-整合)） |
 
 ---
 
-### Text API
+### Text API（富文本與多文字容器）
 
-#### `insertText(index, text)`
+支援在單一文件內建立多個具名文字容器（預設容器名稱為 `'content'`），並支援與 Quill / Tiptap 相容的富文本格式屬性與 Delta 操作。
 
-插入文字到 `content` 文字區塊。
-
-```typescript
-client.insertText(0, 'Hello');
-client.insertText(5, ' World');
-```
-
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `index` | `number` | 插入位置（0-based） |
-| `text` | `string` | 要插入的文字 |
-
-**回傳**：`Promise<void>`
-
-#### `deleteText(index, length)`
-
-刪除文字。
+#### `insertText(index, text, attributes?, textName?)`
 
 ```typescript
-client.deleteText(5, 6); // 刪除 " World"
+async insertText(
+  index: number,
+  text: string,
+  attributes?: Record<string, any>,
+  textName: string = 'content'
+): Promise<void>
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `index` | `number` | 起始位置（0-based） |
-| `length` | `number` | 刪除字元數 |
+在指定文字容器的 `index` 位置插入文字，可選擇附帶富文本格式屬性（如 `{ bold: true, color: '#ff0000' }`）。
 
-**回傳**：`Promise<void>`
-
-#### `clearText()`
-
-清空所有文字。
+#### `deleteText(index, length, textName?)`
 
 ```typescript
-client.clearText();
+async deleteText(
+  index: number,
+  length: number,
+  textName: string = 'content'
+): Promise<void>
 ```
 
-**回傳**：`Promise<void>`
+從指定文字容器的 `index` 位置開始刪除 `length` 個字元。
 
-#### `getText()`
-
-讀取目前文字。
+#### `formatText(index, length, attributes, textName?)`
 
 ```typescript
-const text = client.getText(); // "Hello"
+async formatText(
+  index: number,
+  length: number,
+  attributes: Record<string, any>,
+  textName: string = 'content'
+): Promise<void>
 ```
 
-**回傳**：`string`
+對指定文字容器 `[index, index + length)` 區間內的文字套用富文本格式屬性（例如 `{ italic: true, bold: null }`）。
 
-#### `subscribe(listener)`
-
-訂閱文字變更（本地 + 遠端皆觸發）。
+#### `applyTextDelta(ops, textName?)`
 
 ```typescript
-const unsubscribe = client.subscribe((text) => {
-  console.log('Text changed:', text);
-});
-
-// 取消訂閱
-unsubscribe();
+async applyTextDelta(
+  ops: TextDeltaOp[],
+  textName: string = 'content'
+): Promise<void>
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `listener` | `(text: string) => void` | 變更回呼 |
+將 Quill 相容的 Delta 操作陣列（支援 `insert`、`retain`、`delete` 與 `attributes`）以單一 CRDT 事務套用至指定文字容器。
 
-**回傳**：`() => void` — 取消訂閱函式
+```typescript
+await client.applyTextDelta(
+  [
+    { insert: 'Hello ', attributes: { bold: true } },
+    { insert: 'World\n' },
+  ],
+  'article'
+);
+```
+
+#### `clearText(textName?)`
+
+```typescript
+async clearText(textName: string = 'content'): Promise<void>
+```
+
+清空指定文字容器的所有文字內容。
+
+#### `getText(textName?)`
+
+```typescript
+getText(textName: string = 'content'): string
+```
+
+取得指定文字容器目前的純文字字串。
+
+#### `getTextDelta(textName?)`
+
+```typescript
+getTextDelta(textName: string = 'content'): TextDeltaOp[]
+```
+
+取得指定文字容器目前的富文本 Delta 陣列（格式為 `Array<{ insert: string, attributes?: Record<string, any> }>`）。
 
 ---
 
-### Map API
+### Map API（完整 CRUD 與原生型別保真）
+
+操作具名的 CRDT Map（鍵值對結構）。底層透過 Rust `yrs::Any` 原生儲存所有基礎型別與巢狀結構，**不會發生 `"123"` 轉數字或 `"true"` 轉布林的型別失真**。
 
 #### `setMap(mapName, key, value)`
 
-寫入 Map 鍵值。非字串值會自動 `JSON.stringify`。
-
 ```typescript
-client.setMap('settings', 'theme', 'dark');
-client.setMap('settings', 'fontSize', 16);
-client.setMap('settings', 'options', { sidebar: true });
+async setMap(mapName: string, key: string, value: any): Promise<void>
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `mapName` | `string` | Map 名稱 |
-| `key` | `string` | 鍵名 |
-| `value` | `any` | 值（自動序列化） |
+在名為 `mapName` 的 Map 中設定 `key` 的值。若設定了對應的 Zod Schema，會在寫入前自動驗證。
 
-**回傳**：`Promise<void>`
+```typescript
+await client.setMap('settings', 'theme', 'dark');
+await client.setMap('settings', 'code', '123');     // 保持為 string "123"
+await client.setMap('settings', 'fontSize', 16);    // 保持為 number 16
+await client.setMap('settings', 'profile', { name: 'Alice', role: 'admin' });
+```
 
-> 若有配置 Zod Schema，寫入前會自動驗證。驗證失敗時拋出錯誤。
+#### `deleteMap(mapName, key)` / `deleteMapKey(mapName, key)`
+
+```typescript
+async deleteMap(mapName: string, key: string): Promise<void>
+async deleteMapKey(mapName: string, key: string): Promise<void>
+```
+
+從名為 `mapName` 的 Map 中刪除指定的 `key`，並自動同步至所有連線端。`deleteMapKey` 為 `deleteMap` 的語意別名。
+
+```typescript
+await client.deleteMap('settings', 'code');
+```
+
+#### `hasMapKey(mapName, key)`
+
+```typescript
+hasMapKey(mapName: string, key: string): boolean
+```
+
+檢查名為 `mapName` 的 Map 中是否存在指定的 `key`。
 
 #### `getMap(mapName)`
 
-讀取整個 Map。字串值會嘗試 `JSON.parse` 還原。
-
 ```typescript
-const settings = client.getMap('settings');
-// { theme: "dark", fontSize: 16, options: { sidebar: true } }
+getMap(mapName: string): Record<string, any>
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `mapName` | `string` | Map 名稱 |
-
-**回傳**：`Record<string, any>`
+取得名為 `mapName` 的 Map 中所有鍵值對，回傳原生 JavaScript 物件。
 
 #### `setMapDeep(mapName, path, value)`
 
-深層巢狀 Map 寫入，在 CRDT 層級實現屬性級合併（不會覆蓋同層其他鍵）。
-
 ```typescript
-client.setMapDeep('config', ['ui', 'sidebar', 'width'], 300);
-client.setMapDeep('config', ['ui', 'sidebar', 'visible'], true);
-// config = { ui: { sidebar: { width: 300, visible: true } } }
+setMapDeep(mapName: string, path: string[], value: any): void
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `mapName` | `string` | 根 Map 名稱 |
-| `path` | `string[]` | 巢狀路徑陣列 |
-| `value` | `string \| number \| boolean` | 葉節點值 |
+在巢狀 Map 結構中，沿著 `path` 路徑深入設定任意 JS 型別的 `value`（支援數字、字串、布林、物件、陣列與 `null`）。路徑上不存在的中間層 `MapPrelim` 會自動建立。
+
+```typescript
+// 等同於設定 canvas.node_1.position.x = 150
+client.setMapDeep('canvas', ['node_1', 'position', 'x'], 150);
+// 亦支援字串或物件
+client.setMapDeep('canvas', ['node_1', 'label'], 'Hero Card');
+```
 
 #### `batchSet(entries)`
 
-批量 Map 寫入，所有操作合併為單一 CRDT 事務（單一 diff）。
+```typescript
+batchSet(entries: Array<[string, string, any]>): void
+```
+
+在**單一 CRDT 事務**中批次寫入多筆 Map 資料，只產生一次 diff 與一次網路廣播。若設定了 Zod Schema，會在寫入前對所有項目執行驗證。
 
 ```typescript
 client.batchSet([
-  ['settings', 'theme', 'dark'],
-  ['settings', 'lang', 'zh-TW'],
-  ['profile', 'name', 'Alice'],
+  ['node-1', 'x', 100],
+  ['node-1', 'y', 200],
+  ['node-2', 'x', 300],
+  ['node-2', 'y', 400],
 ]);
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `entries` | `[string, string, any][]` | `[mapName, key, value]` 陣列 |
-
 ---
 
-### Array API
+### Array API（Push / Insert / Delete / Move）
+
+操作具名的 CRDT Array（有序列表結構）。
 
 #### `pushArray(arrayName, item)`
 
-將元素推入陣列尾端。非字串值自動 `JSON.stringify`。
-
 ```typescript
-client.pushArray('logs', { action: 'click', time: Date.now() });
-client.pushArray('tags', 'important');
+async pushArray(arrayName: string, item: any): Promise<void>
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `arrayName` | `string` | Array 名稱 |
-| `item` | `any` | 要推入的元素 |
+將 `item` 推入名為 `arrayName` 的 Array 尾端（支援任意原生 JS 型別與物件）。若設定了對應的 Zod Schema，會在寫入前自動驗證。
 
-**回傳**：`Promise<void>`
+#### `insertArray(arrayName, index, item)`
 
-> 若有配置 Zod Schema（`z.array(...)` 型別），寫入前會驗證每個元素。
+```typescript
+async insertArray(arrayName: string, index: number, item: any): Promise<void>
+```
+
+在名為 `arrayName` 的 Array 的指定 `index` 位置插入 `item`。若設定了對應的 Zod Schema，會在寫入前自動驗證。
+
+#### `deleteArray(arrayName, index, length?)`
+
+```typescript
+async deleteArray(arrayName: string, index: number, length: number = 1): Promise<void>
+```
+
+從名為 `arrayName` 的 Array 的 `index` 位置開始刪除 `length` 個元素（預設刪除 1 個）。
+
+#### `moveArray(arrayName, fromIndex, toIndex)`
+
+```typescript
+async moveArray(arrayName: string, fromIndex: number, toIndex: number): Promise<void>
+```
+
+將名為 `arrayName` 的 Array 中位於 `fromIndex` 的元素移動至 `toIndex`（適用於圖層 z-index 排序、看板卡片拖曳排序）。
 
 #### `getArray(arrayName)`
 
-讀取整個 Array。字串元素會嘗試 `JSON.parse` 還原。
-
 ```typescript
-const logs = client.getArray('logs');
-// [{ action: "click", time: 1707955200000 }]
+getArray(arrayName: string): any[]
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `arrayName` | `string` | Array 名稱 |
+取得名為 `arrayName` 的 Array 中所有元素。
 
-**回傳**：`any[]`
+---
+
+### 容器級精準訂閱與生命週期
+
+#### `subscribeMap(mapName, listener)`
+
+```typescript
+subscribeMap(mapName: string, listener: () => void): () => void
+```
+
+僅訂閱指定 `mapName` 容器的變更。本地修改其他容器（例如打字或修改其他 Map）時**不會**觸發此回呼；收到遠端增量更新或快照時會自動觸發。訂閱時會立即觸發一次初始呼叫，並回傳取消訂閱函式。
+
+#### `subscribeArray(arrayName, listener)`
+
+```typescript
+subscribeArray(arrayName: string, listener: () => void): () => void
+```
+
+僅訂閱指定 `arrayName` 容器的變更。訂閱時會立即觸發一次初始呼叫，並回傳取消訂閱函式。
+
+#### `subscribeText(textName, listener)`
+
+```typescript
+subscribeText(textName: string, listener: (text: string) => void): () => void
+```
+
+僅訂閱指定 `textName` 文字容器的變更，回呼參數為該容器目前的純文字字串。訂閱時會立即觸發一次初始呼叫，並回傳取消訂閱函式。
+
+#### `subscribe(listener)`
+
+```typescript
+subscribe(listener: (text: string) => void): () => void
+```
+
+全域訂閱文件變更（任何本地或遠端變更皆會觸發）。訂閱時會立即以目前 `getText()` 的值觸發一次。
+
+#### `subscribeNetwork(cb)`
+
+```typescript
+subscribeNetwork(cb: (status: NetworkStatus) => void): () => void
+```
+
+訂閱網路連線狀態變更（`'connecting' | 'online' | 'offline' | 'failed'`）。支援註冊多個監聽器，訂閱時立即以目前狀態觸發一次，並回傳取消訂閱函式。
+
+#### `use(plugin)`
+
+```typescript
+use(plugin: YoinPlugin): this
+```
+
+掛載一個插件到客戶端。支援鏈式呼叫，且同一個插件實例不會被重複安裝。
+
+#### `destroy()`
+
+```typescript
+destroy(): void
+```
+
+銷毀客戶端實例，釋放所有資源：
+1. 清除心跳與垃圾回收計時器
+2. 呼叫所有已安裝插件的 `onDestroy()`（包含關閉 IndexedDB 連線）
+3. 發送離線 Awareness 廣播並關閉 WebSocket 連線
+4. 清除所有訂閱者與佇列
+5. 呼叫 `this.doc.free?.()` 釋放底層 Rust WASM 線性記憶體
+
+---
+
+### 伺服器快照預載與同步控制
+
+#### `exportSnapshot()`
+
+```typescript
+exportSnapshot(): Uint8Array
+```
+
+將目前整個 CRDT 文件狀態匯出為完整的二進位快照（等同於對空 State Vector 計算完整 diff），可直接儲存至後端資料庫（如 PostgreSQL `bytea` 或 S3）。
+
+#### `applySnapshot(snapshot)`
+
+```typescript
+applySnapshot(snapshot: Uint8Array): void
+```
+
+將外部（例如伺服器 REST API 預載或本地備份）的二進位快照套用至當前 CRDT 文件，並通知所有容器與全域訂閱者。
+
+#### `syncWithPeers()`
+
+```typescript
+syncWithPeers(): void
+```
+
+主動向房間內所有已連線同儕發送 `MSG_SYNC_STEP_1`（State Vector）請求差異同步（例如在 IndexedDB 非同步載入完成後自動呼叫）。
+
+---
+
+### Hook API（插件系統使用）
+
+#### `onDocUpdate(cb)`
+
+```typescript
+onDocUpdate(cb: (update: Uint8Array) => void): () => void
+```
+
+註冊一個在**任何更新**（本地操作或遠端同步）發生後都會被呼叫的回呼。回傳取消註冊函式。
+
+#### `onLocalUpdate(cb)`
+
+```typescript
+onLocalUpdate(cb: (update: Uint8Array) => void): () => void
+```
+
+註冊一個**僅在本地操作**產生 diff 時被呼叫的回呼。回傳取消註冊函式。
 
 ---
 
 ### Awareness API
 
-Awareness 系統用於廣播使用者的即時狀態（游標位置、在線狀態、選取範圍等），不寫入 CRDT 文件。
+Awareness 用於傳遞**暫態（Ephemeral）的使用者存在資訊**（游標位置、選取範圍、名稱、顏色等），不經過 CRDT 歷史記錄，且在離線時標記為 `{ transient: true }` 不會塞入離線重送佇列。
 
-#### `setAwareness(partial)`
-
-設定 / 更新本地 Awareness 狀態。自動合併既有狀態，並以節流方式廣播。
+#### `setAwareness(state)`
 
 ```typescript
-client.setAwareness({
-  name: 'Alice',
-  color: '#ff6b6b',
-  cursorX: 120,
-  cursorY: 450,
-  device: 'desktop',
-});
+setAwareness(state: AwarenessPartial): void
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `partial` | `AwarenessPartial` | 要更新的欄位（部分更新） |
+更新本地端的 Awareness 狀態並廣播給其他連線端（內建節流機制，預設 30ms）。
 
-> 節流機制：預設 30ms leading-edge throttle + trailing pending update。
-
-#### `onAwarenessChange(callback)`
-
-訂閱 Awareness 狀態變更。訂閱時立即觸發一次回呼。
+#### `onAwarenessChange(cb)`
 
 ```typescript
-const unsubscribe = client.onAwarenessChange((states) => {
-  for (const [clientId, state] of states) {
-    console.log(`${state.name} is at (${state.cursorX}, ${state.cursorY})`);
-  }
-});
+onAwarenessChange(cb: AwarenessCallback): () => void
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `callback` | `AwarenessCallback` | `(states: Map<string, AwarenessState>) => void` |
-
-**回傳**：`() => void` — 取消訂閱函式
-
-#### `leaveAwareness()`
-
-廣播離線狀態並清除本地 Awareness。在 `destroy()` 時自動呼叫。
-
-```typescript
-client.leaveAwareness();
-```
-
-#### `getClientId()`
-
-取得本客戶端的隨機 ID。
-
-```typescript
-const myId = client.getClientId(); // "a3f8k2m1"
-```
-
-**回傳**：`string`
-
----
-
-### 網路狀態
-
-#### `subscribeNetwork(callback)`
-
-訂閱網路狀態變更。
-
-```typescript
-client.subscribeNetwork((status) => {
-  // status: 'connecting' | 'online' | 'offline'
-  updateStatusIndicator(status);
-});
-```
-
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `callback` | `(status: NetworkStatus) => void` | 狀態回呼 |
-
-`NetworkProvider` 實例也可直接存取：
-
-```typescript
-client.network.isConnected  // boolean — WebSocket 是否已連線
-```
-
----
-
-### 插件 API
-
-#### `use(plugin)`
-
-安裝插件。支援鏈式呼叫。
-
-```typescript
-client
-  .use(dbPlugin)
-  .use(undoPlugin)
-  .use(createLoggerPlugin('[Debug]'));
-```
-
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `plugin` | `YoinPlugin` | 插件實例 |
-
-**回傳**：`this`（鏈式呼叫）
-
----
-
-### 底層存取
-
-以下 API 主要供插件或進階使用者內部使用。
-
-#### `getDoc()`
-
-取得底層 `YoinDoc`（Rust CRDT 文件 WASM 物件）。
-
-```typescript
-const doc = client.getDoc();
-const sv = doc.get_state_vector();
-```
-
-**回傳**：`YoinDoc`
-
-#### `getConfig()`
-
-取得建構時傳入的設定。
-
-**回傳**：`YoinConfig`
-
-#### `broadcastUpdate(update)`
-
-手動廣播 CRDT update 到所有遠端節點。主要供 Undo 插件使用。
-
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `update` | `Uint8Array` | CRDT 增量差異 |
-
-#### `onDocUpdate(callback)`
-
-訂閱所有文件更新（本地 + 遠端）。
-
-**回傳**：`() => void` — 取消訂閱函式
-
-#### `onLocalUpdate(callback)`
-
-僅訂閱本地操作觸發的更新。
-
-**回傳**：`() => void` — 取消訂閱函式
-
-#### `notifyListeners()`
-
-手動觸發所有 `subscribe()` 監聽器。
-
-#### `notifyAwarenessListeners()`
-
-手動觸發所有 Awareness 監聽器。
-
-#### `map_get_all(mapName)`
-
-底層 Map 讀取（不做 JSON.parse），供 React Hook 內部使用。
-
-#### `array_get_all(arrayName)`
-
-底層 Array 讀取（不做 JSON.parse），供 React Hook 內部使用。
+訂閱所有連線端的 Awareness 狀態變更。回傳取消訂閱函式。
 
 #### `getAwarenessStates()`
 
-取得 Awareness 狀態 Map。
-
-**回傳**：`Map<string, AwarenessState>`
-
----
-
-### 生命週期
-
-#### `destroy()`
-
-銷毀客戶端：清理所有計時器、銷毀插件、廣播離線狀態。
-
 ```typescript
-client.destroy();
+getAwarenessStates(): Map<string, AwarenessState>
 ```
 
-銷毀流程：
-1. 清除心跳 / GC / Awareness 計時器
-2. 呼叫每個插件的 `onDestroy()`
-3. 廣播 `leaveAwareness()`
+取得目前所有連線端（包含自己）的 Awareness 狀態 Map，key 為 `clientId`。
+
+#### `leaveAwareness()`
+
+```typescript
+leaveAwareness(): void
+```
+
+主動通知其他連線端本客戶端已離開。
+
+#### `bindCursorTracking(container, renderer)`
+
+```typescript
+bindCursorTracking(container: HTMLElement, renderer: CursorRenderer): () => void
+```
+
+自動在指定的 HTML 容器上綁定滑鼠移動事件，並自動渲染所有遠端使用者的游標 DOM 元素。回傳清理函式。
 
 ---
 
-## Proxy 透明寫入
+### 存取器與工具方法
 
-使用原生 JS 語法操作 CRDT 資料。
+| 方法 | 回傳型別 | 說明 |
+|------|----------|------|
+| `getDoc()` | `YoinDoc` | 取得底層的 WASM `YoinDoc` 實例（供進階操作或插件使用） |
+| `getConfig()` | `YoinConfig` | 取得建構時傳入的設定物件 |
+| `getClientId()` | `string` | 取得本客戶端的隨機 8 碼識別碼 |
+
+---
+
+## Proxy 透明讀寫
+
+Proxy 模組讓你用原生 JavaScript 的屬性賦值與陣列方法直接操作 CRDT，無需手動呼叫 `setMap` / `deleteMap` / `pushArray`。
 
 ### `createMapProxy<T>(client, mapName)`
 
-建立 Map 的 Proxy 物件。賦值自動呼叫 `setMap()`，巢狀賦值自動呼叫 `setMapDeep()`。
+```typescript
+function createMapProxy<T extends Record<string, any>>(
+  client: YoinClient,
+  mapName: string
+): T
+```
+
+建立一個綁定到指定 CRDT Map 的透明 Proxy 物件：
+- **讀取 (`proxy.key`)**：即時從 `client.getMap(mapName)` 取值；若鍵不存在回傳 `undefined`。若值為巢狀物件，回傳支援深層讀寫的 Proxy。
+- **寫入 (`proxy.key = val` / `proxy.a.b = val`)**：頂層自動呼叫 `client.setMap`，深層自動呼叫 `client.setMapDeep`。
+- **刪除 (`delete proxy.key`)**：自動呼叫 `client.deleteMap(mapName, key)`。
+- **鍵檢查與列舉 (`'key' in proxy` / `Object.keys(proxy)`)**：直接反映 CRDT Map 目前的所有鍵。
 
 ```typescript
 import { createMapProxy } from '@yoin/client';
 
-interface Settings {
-  theme: string;
-  fontSize: number;
-  sidebar: { width: number; visible: boolean };
+interface BoardState {
+  title: string;
+  zoom: number;
+  viewport?: { x: number; y: number };
 }
 
-const settings = createMapProxy<Settings>(client, 'settings');
+const board = createMapProxy<BoardState>(client, 'board');
 
-// 一層寫入 → setMap('settings', 'theme', 'dark')
-settings.theme = 'dark';
-
-// 深層寫入 → setMapDeep('settings', ['sidebar', 'width'], 280)
-settings.sidebar.width = 280;
-
-// 讀取（透過 CRDT 底層）
-console.log(settings.theme);
+board.title = '專案白板';
+board.zoom = 1.5;
+board.viewport = { x: 0, y: 0 };
+board.viewport.x = 120;         // 深層寫入 → 自動呼叫 setMapDeep
+delete (board as any).zoom;     // 刪除鍵 → 自動呼叫 deleteMap
 ```
-
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `client` | `YoinClient` | 客戶端實例 |
-| `mapName` | `string` | Map 名稱 |
-
-**回傳**：`T`（Proxy 物件）
 
 ### `createArrayProxy<T>(client, arrayName)`
 
-建立 Array 的 Proxy 物件。`.push()` 自動呼叫 `pushArray()`。
+```typescript
+function createArrayProxy<T>(
+  client: YoinClient,
+  arrayName: string
+): T[]
+```
+
+建立一個綁定到指定 CRDT Array 的透明 Proxy 陣列，每次讀取（如 `arr[0]`、`arr.length`、`arr.map(...)`）皆即時從 `client.getArray(arrayName)` 取得最新狀態，並支援以下變異方法：
+- **`.push(...items)`** → 呼叫 `client.pushArray`
+- **`.splice(start, deleteCount?, ...items)`** → 組合呼叫 `client.deleteArray` 與 `client.insertArray`
+- **`.pop()`** → 刪除並回傳最後一個元素
+- **`.shift()`** → 刪除並回傳第一個元素
+- **`.unshift(...items)`** → 在開頭依序插入元素
 
 ```typescript
 import { createArrayProxy } from '@yoin/client';
 
-const logs = createArrayProxy<{ action: string }>(client, 'logs');
-logs.push({ action: 'login' }); // → pushArray('logs', { action: 'login' })
+const todos = createArrayProxy<{ text: string; done: boolean }>(client, 'todos');
+
+todos.push({ text: '完成 API 文件', done: false });
+todos.splice(0, 1, { text: '完成 v0.1.2 升級', done: true });
 ```
-
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `client` | `YoinClient` | 客戶端實例 |
-| `arrayName` | `string` | Array 名稱 |
-
-**回傳**：`T[]`（Proxy 陣列）
-
-> ⚠️ 目前僅支援 `.push()` 操作，直接 index 賦值會產生警告。
 
 ---
 
-## Plugin 系統
+## 插件系統
 
-### 插件介面
+Yoin 採用微核心架構，將非核心功能（持久化、復原/重做、日誌等）解耦為獨立插件。
+
+### `YoinPlugin` 介面
 
 ```typescript
 interface YoinPlugin {
@@ -542,405 +575,220 @@ interface YoinPlugin {
 }
 ```
 
-| 鉤子 | 時機 | 說明 |
-|------|------|------|
-| `onInstall` | `client.use(plugin)` 時 | 初始化，取得 client 參照 |
-| `onBeforeUpdate` | 本地寫入後、廣播前 | 可用於攔截 / 日誌 |
-| `onAfterUpdate` | 本地或遠端 update 套用後 | 可用於持久化 / 日誌 |
-| `onDestroy` | `client.destroy()` 時 | 清理資源（計時器、訂閱） |
-
----
-
-### IndexedDB 持久化插件
-
-自動將 CRDT 文件快照寫入 IndexedDB，實現離線持久化。
+### `createDbPlugin(options)` — IndexedDB 持久化
 
 ```typescript
-import { createDbPlugin } from '@yoin/client';
-
-const { plugin, forceSave } = createDbPlugin({
-  dbName: 'my-app',
-  debounceMs: 1000,      // 預設 1000ms
-});
-
-client.use(plugin);
-
-// 手動立即儲存
-await forceSave();
+function createDbPlugin(options: YoinDbPluginOptions): {
+  plugin: YoinDbPlugin;
+  forceSave: () => Promise<void>;
+}
 ```
 
-#### `YoinDbPluginOptions`
+自動將 CRDT 文件快照持久化到瀏覽器的 IndexedDB（內建 `IDBDatabase` 連線快取）：
+1. **安裝時**：自動從 IndexedDB 載入歷史快照並合併到當前文件；若此時網路已連線，會自動呼叫 `client.syncWithPeers()` 與遠端同儕交換差異。
+2. **更新時**：每次文件變更（本地或遠端）後，以防抖（Debounce，預設 `1000ms`）方式自動排程存檔。
+3. **銷毀時**：自動取消計時器並關閉 IndexedDB 連線。
 
-| 屬性 | 型別 | 必填 | 預設 | 說明 |
-|------|------|------|------|------|
-| `dbName` | `string` | ✅ | — | IndexedDB 資料庫名稱 |
-| `debounceMs` | `number` | — | `1000` | 自動儲存防抖間隔（ms） |
-
-**行為**：
-- 安裝時從 IndexedDB 載入既有資料（`loadFromDisk`）
-- 每次 doc update 後排程防抖儲存
-- `forceSave()` 立即持久化
-
----
-
-### Undo / Redo 插件
-
-基於 Rust 端 `UndoManager`，僅撤銷 / 重做**本地**操作。
+### `createUndoPlugin()` — 復原/重做
 
 ```typescript
-import { createUndoPlugin } from '@yoin/client';
-
-const { plugin, undo, redo } = createUndoPlugin();
-client.use(plugin);
-
-// 撤銷上一步本地操作
-undo();
-
-// 重做
-redo();
+function createUndoPlugin(): {
+  plugin: YoinUndoPlugin;
+  undo: () => void;
+  redo: () => void;
+}
 ```
 
-**特性**：
-- 使用 origin 標記區分本地 / 遠端操作
-- Lazy 初始化：首次 `undo()` / `redo()` 時才建立 UndoManager
-- 撤銷後自動廣播 diff 給遠端
+基於 Yrs 內建的 `UndoManager`，提供本地操作的復原（Undo）與重做（Redo）功能：
+- 安裝時自動啟用預設 `'content'` Text 的追蹤。
+- 當使用者透過 `setMap`、`deleteMap`、`setMapDeep`、`batchSet`、`pushArray`、`insertArray`、`deleteArray`、`moveArray` 或自訂 `textName` 的文字方法操作容器時，**自動將該容器加入 Undo 追蹤範圍**（透過底層 `expand_undo_scope_for`）。
+- 只會復原**本地端**的操作，不會復原其他協作者的變更。
 
----
-
-### Logger 插件
-
-開發除錯用，在 Console 輸出 update 日誌。
+### `createLoggerPlugin(prefix?)` — 除錯日誌
 
 ```typescript
-import { createLoggerPlugin } from '@yoin/client';
-
-client.use(createLoggerPlugin('[Debug]'));
-// [Debug] Plugin installed!
-// [Debug] Update detected, size: 42 bytes
+function createLoggerPlugin(prefix?: string): YoinPlugin
 ```
 
-| 參數 | 型別 | 預設 | 說明 |
-|------|------|------|------|
-| `prefix` | `string` | `'[YoinLogger]'` | 日誌前綴 |
-
----
-
-### 自訂插件
+### 自訂插件範例
 
 ```typescript
 import type { YoinPlugin } from '@yoin/client';
 
-const myPlugin: YoinPlugin = {
-  name: 'my-analytics',
-
+const analyticsPlugin: YoinPlugin = {
+  name: 'analytics-plugin',
   onInstall(client) {
-    console.log(`Connected to doc: ${client.getConfig().docId}`);
+    console.log(`Analytics mounted for doc: ${client.getConfig().docId}`);
   },
-
   onAfterUpdate(update) {
-    analytics.track('crdt_update', { bytes: update.length });
-  },
-
-  onDestroy() {
-    analytics.flush();
+    navigator.sendBeacon('/api/metrics', JSON.stringify({ bytes: update.byteLength }));
   },
 };
-
-client.use(myPlugin);
 ```
 
 ---
 
-## React Hooks
+## React Hooks (`@yoin/client/react`)
 
-匯入路徑：`@yoin/client/react`
+從 `@yoin/client/react` 匯入。所有狀態型 Hooks 皆基於 React 18 的 `useSyncExternalStore` 實作，並採用容器級訂閱以確保最佳渲染效能。
 
-### `YoinProvider`
-
-Context Provider，包裹需要存取 Yoin 資料的子元件。
+### `<YoinProvider>`
 
 ```tsx
-import { YoinProvider } from '@yoin/client/react';
-
-<YoinProvider client={client}>
-  <App />
-</YoinProvider>
+function YoinProvider(props: {
+  config: YoinConfig;
+  children: ReactNode;
+  fallback?: ReactNode;
+}): JSX.Element
 ```
-
-| 屬性 | 型別 | 說明 |
-|------|------|------|
-| `client` | `YoinClient` | Yoin 客戶端實例 |
-| `children` | `React.ReactNode` | 子元件 |
 
 ### `useYoinClient()`
 
-取得 Context 中的 `YoinClient`。
-
-```tsx
-const client = useYoinClient();
+```typescript
+function useYoinClient(): YoinClient
 ```
-
-**回傳**：`YoinClient`
-
-> 若未在 `YoinProvider` 內使用，會拋出錯誤。
 
 ### `useYoinMap<T>(mapName)`
 
-響應式 Map Hook。回傳 Proxy 物件，直接賦值觸發 CRDT 寫入 + React 重繪。
-
-```tsx
-interface AppSettings {
-  theme: string;
-  fontSize: number;
-}
-
-function SettingsPanel() {
-  const settings = useYoinMap<AppSettings>('app-settings');
-
-  return (
-    <div>
-      <p>Theme: {settings.theme}</p>
-      <button onClick={() => settings.theme = 'dark'}>
-        Dark Mode
-      </button>
-    </div>
-  );
-}
+```typescript
+function useYoinMap<T extends Record<string, any>>(mapName: string): T
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `mapName` | `string` | CRDT Map 名稱 |
-
-**回傳**：`T`（響應式 Proxy）
-
-內部使用 `useSyncExternalStore` + `JSON.stringify` snapshot 做變更偵測。
+回傳一個綁定到指定 CRDT Map 的**響應式 Proxy 物件**。底層使用 `client.subscribeMap(mapName, ...)`，僅在該 Map 變更時觸發元件重新渲染，並自動更新 Proxy 參考以確保 React 子元件能正確偵測 props 變更。
 
 ### `useYoinArray<T>(arrayName)`
 
-響應式 Array Hook。
+```typescript
+function useYoinArray<T = any>(arrayName: string): T[]
+```
 
-```tsx
-function LogList() {
-  const logs = useYoinArray<{ action: string; time: number }>('logs');
+回傳一個綁定到指定 CRDT Array 的**響應式 Proxy 陣列**。底層使用 `client.subscribeArray(arrayName, ...)`，支援 `.push()`、`.splice()`、`.pop()`、`.shift()`、`.unshift()` 與索引讀取。
 
-  return (
-    <ul>
-      {logs.map((log, i) => <li key={i}>{log.action}</li>)}
-      <button onClick={() => logs.push({ action: 'click', time: Date.now() })}>
-        Add Log
-      </button>
-    </ul>
-  );
+### `useYoinText(textName?)`
+
+```typescript
+function useYoinText(textName: string = 'content'): {
+  text: string;
+  delta: TextDeltaOp[];
+  insert: (index: number, content: string, attributes?: Record<string, any>) => Promise<void>;
+  deleteText: (index: number, length: number) => Promise<void>;
+  format: (index: number, length: number, attributes: Record<string, any>) => Promise<void>;
+  applyDelta: (ops: TextDeltaOp[]) => Promise<void>;
+  clear: () => Promise<void>;
 }
 ```
 
-| 參數 | 型別 | 說明 |
-|------|------|------|
-| `arrayName` | `string` | CRDT Array 名稱 |
-
-**回傳**：`T[]`（響應式 Proxy 陣列）
+訂閱並操作指定的具名 CRDT 文字容器（預設為 `'content'`），提供純文字 `text`、富文本 `delta` 以及完整的編輯方法。
 
 ### `useYoinAwareness()`
 
-響應式 Awareness Hook。
-
-```tsx
-function UserList() {
-  const awareness = useYoinAwareness();
-
-  return (
-    <ul>
-      {[...awareness.values()].map(user => (
-        <li key={user.clientId} style={{ color: user.color }}>
-          {user.name} ({user.device})
-        </li>
-      ))}
-    </ul>
-  );
+```typescript
+function useYoinAwareness(): {
+  states: Map<string, AwarenessState>;
+  setLocalState: (state: AwarenessPartial) => void;
 }
 ```
-
-**回傳**：`Map<string, AwarenessState>`
 
 ### `useYoinStatus()`
 
-響應式連線狀態 Hook。
+```typescript
+function useYoinStatus(): NetworkStatus
+```
 
-```tsx
-function StatusBar() {
-  const isConnected = useYoinStatus();
+取得目前的 WebSocket 網路連線狀態（`'connecting' | 'online' | 'offline' | 'failed'`）。底層使用 `client.subscribeNetwork`，可安全在多個元件中同時使用。
 
-  return <span>{isConnected ? '🟢 Online' : '🔴 Offline'}</span>;
+### `useYoinUndo()`
+
+```typescript
+function useYoinUndo(): {
+  undo: () => void;
+  redo: () => void;
 }
 ```
 
-**回傳**：`boolean` — `true` 表示已連線
+---
+
+## 底層模組
+
+### `NetworkManager`
+
+```typescript
+class NetworkManager {
+  constructor(url: string, docId: string, onMessageCallback: (data: Uint8Array) => void);
+  onStatusChange?: (status: NetworkStatus) => void;
+  connect(): void;
+  broadcast(data: Uint8Array, options?: BroadcastOptions): void;
+  getQueueLength(): number;
+  clearQueue(): void;
+  disconnect(): void;
+}
+```
+
+- **指數退避重連**：斷線後自動重連，延遲從 `1000ms` 開始倍增，上限 `30000ms`，最多重試 `50` 次；超過上限時發出 `'failed'` 狀態。
+- **暫態訊息過濾 (`BroadcastOptions.transient`)**：當 `options.transient === true` 時（如 Awareness、心跳、三向交握封包），離線期間會直接丟棄而不進入 `messageQueue`，確保重連時只重送真正的 CRDT 資料變更。
+
+### `StorageAdapter`
+
+```typescript
+class StorageAdapter {
+  constructor(dbName: string);
+  saveSnapshot(docId: string, snapshotBytes: Uint8Array): Promise<void>;
+  loadSnapshot(docId: string): Promise<Uint8Array | null>;
+  close(): void;
+}
+```
+
+封裝瀏覽器 IndexedDB（Object Store 名稱為 `'snapshots'`），內建 `IDBDatabase` 連線實例快取，避免高頻存檔時重複開啟資料庫連線。
 
 ---
 
-## Schema 驗證
+## Schema 驗證（Zod 整合）
 
-Yoin 整合 [Zod](https://zod.dev/) 進行寫入時驗證。在 `YoinConfig.schemas` 中定義規則後，`setMap()` 和 `pushArray()` 會在寫入前自動驗證。
-
-```typescript
-import { z } from 'zod';
-
-const client = new YoinClient({
-  url: 'wss://your-worker.workers.dev',
-  docId: 'example',
-  schemas: {
-    // Map Schema — 使用 z.object()
-    'app-settings': z.object({
-      theme: z.enum(['light', 'dark']),
-      fontSize: z.number().min(8).max(72),
-      language: z.string(),
-    }),
-
-    // Array Schema — 使用 z.array()
-    'action-logs': z.array(z.object({
-      action: z.string(),
-      timestamp: z.number(),
-    })),
-  },
-});
-
-// ✅ 驗證通過
-client.setMap('app-settings', 'theme', 'dark');
-
-// ❌ 驗證失敗，拋出 ZodError
-client.setMap('app-settings', 'theme', 'rainbow');
-
-// ✅ 驗證通過
-client.pushArray('action-logs', { action: 'click', timestamp: Date.now() });
-
-// ❌ 驗證失敗
-client.pushArray('action-logs', { action: 123 });
-```
-
-**驗證邏輯**：
-- `z.object()` Schema：驗證對應 `key` 的 field schema
-- `z.record()` Schema：驗證 value schema
-- `z.array()` Schema：驗證每個元素
-- 未定義 Schema 的 Map / Array 不做驗證
+Yoin 支援透過 [Zod](https://zod.dev/) 在寫入 CRDT 前驗證資料結構。只要在 `YoinConfig.schemas` 中定義對應 Map 或 Array 名稱的 Schema，`setMap`、`batchSet`、`pushArray`、`insertArray` 都會在寫入前自動執行驗證。
 
 ---
 
 ## 型別定義
 
-### `YoinConfig`
+### `TextDeltaOp`
 
 ```typescript
-interface YoinConfig {
-  url: string;
-  docId: string;
-  dbName?: string;
-  awarenessThrottleMs?: number;   // 預設 30
-  heartbeatIntervalMs?: number;   // 預設 5000
-  heartbeatTimeoutMs?: number;    // 預設 30000
-  schemas?: Record<string, z.ZodTypeAny>;
+interface TextDeltaOp {
+  insert?: string;
+  delete?: number;
+  retain?: number;
+  attributes?: Record<string, any>;
 }
 ```
 
-### `AwarenessState`
+### `BroadcastOptions`
 
 ```typescript
-interface AwarenessState {
-  clientId: string;
-  name: string;
-  color: string;
-  cursorX?: number | null;
-  cursorY?: number | null;
-  selection?: string | null;
-  offline?: boolean;
-  device?: 'mobile' | 'desktop';
-  lastActive?: number;
-  timestamp: number;
+interface BroadcastOptions {
+  transient?: boolean;
 }
-```
-
-### `AwarenessPartial`
-
-```typescript
-type AwarenessPartial = Partial<Omit<AwarenessState, 'clientId' | 'timestamp'>>;
-```
-
-### `CursorRenderer`
-
-```typescript
-type CursorRenderer = (color: string, name: string) => HTMLElement;
-```
-
-### `AwarenessCallback`
-
-```typescript
-type AwarenessCallback = (states: Map<string, AwarenessState>) => void;
 ```
 
 ### `NetworkStatus`
 
 ```typescript
-type NetworkStatus = 'connecting' | 'online' | 'offline';
+type NetworkStatus = 'connecting' | 'online' | 'offline' | 'failed';
 ```
 
-### `YoinPlugin`
+### `YoinConfig` / `AwarenessState` / `AwarenessPartial` / `YoinPlugin`
 
-```typescript
-interface YoinPlugin {
-  readonly name: string;
-  onInstall(client: YoinClient): void;
-  onBeforeUpdate?(update: Uint8Array): void;
-  onAfterUpdate?(update: Uint8Array): void;
-  onDestroy?(): void;
-}
-```
-
-### `YoinDbPluginOptions`
-
-```typescript
-interface YoinDbPluginOptions {
-  dbName: string;
-  debounceMs?: number;   // 預設 1000
-}
-```
+（完整定義請見上方各章節）
 
 ---
 
 ## 通訊協議
 
-Yoin 使用 1-byte header 二進制協議進行 WebSocket 通訊：
+Yoin 使用 1-byte Header 的二進位協議進行 WebSocket 通訊：
 
-| Type | 常數 | 值 | 方向 | 說明 |
-|------|------|---|------|------|
+| 類型 | 常數名稱 | 值 | 方向 | 說明 |
+|------|----------|----|------|------|
 | Sync Step 1 | `MSG_SYNC_STEP_1` | `0` | Client → Server → Client | 發送 State Vector 請求同步 |
-| Sync Step 2 | `MSG_SYNC_STEP_2` | `1` | 雙向 | 傳送 CRDT Update / Diff |
-| Sync Step 1 Reply | `MSG_SYNC_STEP_1_REPLY` | `2` | Client → Server → Client | 回覆 State Vector |
-| Awareness | `MSG_AWARENESS` | `3` | 雙向 | 感知狀態廣播（JSON over binary） |
-| Join Room | `MSG_JOIN_ROOM` | `4` | Client → Server | 房間加入通知 |
-
-### 訊息格式
-
-```
-┌──────────┬────────────────────────────┐
-│ 1 byte   │ N bytes                    │
-│ msg_type │ payload (Uint8Array)       │
-└──────────┴────────────────────────────┘
-```
-
-### 同步流程（三向交握）
-
-```
-Client A (new)           Server / Relay           Client B (existing)
-    │                         │                         │
-    │── MSG_JOIN_ROOM ──────→ │                         │
-    │── MSG_SYNC_STEP_1 ────→ │── MSG_SYNC_STEP_1 ───→ │
-    │                         │                         │
-    │                         │←── MSG_SYNC_STEP_2 ─── │  (diff based on A's SV)
-    │←── MSG_SYNC_STEP_2 ─── │                         │
-    │                         │←── MSG_SYNC_STEP_1_REPLY│  (B's own SV)
-    │←── MSG_SYNC_STEP_1_REPLY│                         │
-    │                         │                         │
-    │── MSG_SYNC_STEP_2 ────→ │── MSG_SYNC_STEP_2 ───→ │  (diff based on B's SV)
-    │                         │                         │
-    ▼ Both sides synchronized ▼                         ▼
-```
+| Sync Step 2 | `MSG_SYNC_STEP_2` | `1` | 雙向 | 傳送非空的 CRDT Update / Diff |
+| Sync Step 1 Reply | `MSG_SYNC_STEP_1_REPLY` | `2` | Client → Server → Client | 回應自己的 State Vector |
+| Awareness | `MSG_AWARENESS` | `3` | 雙向 | 感知狀態廣播（JSON over binary，標記為 `transient`） |
+| Join Room | `MSG_JOIN_ROOM` | `4` | Client → Server | 加入房間通知（標記為 `transient`） |

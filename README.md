@@ -1,241 +1,220 @@
 [繁體中文](README_zh_Hant.md) | [English](README.md)
 
-# Yoin
+# Yoin (餘韻)
 
-**Local-First Real-time Collaborative State Synchronization Framework**
+**Local-First Real-Time Collaborative State Sync Framework — Powered by Rust WASM (Yrs) + TypeScript Micro-Kernel**
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/Saisai568/yoin/releases/tag/v0.1.0)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-89%20passed-success.svg)](packages/client/tests)
-[![Yoin](public/logo_1.png)](public/logo_1.png)
+[![Tests](https://img.shields.io/badge/tests-123%20passed-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-74%25-green)]()
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)]()
+[![Rust](https://img.shields.io/badge/Rust-WASM-orange)]()
+[![License](https://img.shields.io/badge/license-MIT-blue)]()
 
-Yoin is a CRDT-based real-time collaboration framework that lets developers add multiplayer real-time sync to any application in just a few lines of code. The core engine is written in Rust and runs in the browser via WebAssembly, paired with Cloudflare Durable Objects for WebSocket relay — delivering low-latency, offline-capable, auto-merging collaborative experiences.
+---
 
-> **📦 Version 0.1.0** — First public release with production-ready stability fixes. See [CHANGELOG.md](CHANGELOG.md) for details.
+## What is Yoin?
 
-## Features
+Yoin is a lightweight **Local-First real-time collaboration engine** that wraps [Yrs](https://github.com/y-crdt/y-crdt) (the Rust implementation of Yjs) via WebAssembly into a ready-to-use TypeScript SDK for the frontend.
 
-- **CRDT Engine (Rust + WASM)** — Conflict-free merging powered by [Yrs](https://github.com/y-crdt/y-crdt); edits from any device converge automatically after going offline
-- **TypeScript SDK** — YoinClient micro-kernel + Plugin system + Proxy transparent writes + React Hooks
-- **Cloudflare Edge** — Durable Objects room isolation + Hibernation API with zero cold-start on-demand wake-up
-- **Offline-First** — IndexedDB persistence + offline queue; full functionality while disconnected, auto-sync on reconnect
-- **Awareness System** — Real-time cursors, presence status, selection broadcasting (rAF throttling + Ghost Busting)
-- **Undo / Redo** — Only undoes your own operations without affecting remote collaborators
-- **Schema Validation** — Integrated with Zod for automatic data structure validation on writes
-- **Proxy Syntax** — Use native JS `obj.key = value` syntax to operate on CRDTs with deep nesting support
+**Key Features**:
+
+- **Conflict-Free CRDT Merging** — Built on Yrs, supporting Rich Text Deltas (formatting attributes & multiple named text containers), Map (full CRUD, native type fidelity, deep nesting & batch transactions), and Array (push / insert / delete / move)
+- **Local-First Architecture** — Zero-latency local operations, automatic IndexedDB persistence (cached connection singleton) + non-transient offline queue + exponential backoff auto-reconnection
+- **Container-Scoped Subscriptions** — Dedicated `subscribeMap`, `subscribeArray`, and `subscribeText` listeners isolate 60FPS canvas dragging from rich-text editing
+- **Micro-Kernel + Plugin System** — Lean core extensible via the `YoinPlugin` interface (persistence, multi-container Undo/Redo, logging, etc.)
+- **Transparent Proxy Read/Write** — Mutate CRDTs with native JS property assignments (`proxy.key = val`, `delete proxy.key`, `arr.splice(...)`), automatically synced to all peers
+- **React 18 Hooks** — Built on `useSyncExternalStore`, providing `<YoinProvider>`, `useYoinMap`, `useYoinArray`, `useYoinText`, `useYoinAwareness`, `useYoinStatus`, and `useYoinUndo`
+- **Real-Time Awareness** — Instant broadcast of cursor positions, selections, online status, and device types (with transient offline filtering & automatic garbage collection)
+- **Snapshot Hydration & Broadcast Storm Suppression** — Supports `applySnapshot` / `exportSnapshot` for server snapshot preloading and suppresses empty diff packets during the 3-way handshake
+- **Schema Validation** — Integrated with [Zod](https://zod.dev/) to validate data structures before writing (`setMap`, `batchSet`, `pushArray`, `insertArray`)
+
+---
 
 ## Quick Start
 
-### Installation
+### Prerequisites
+
+- **Node.js** ≥ 18
+- **pnpm** ≥ 9
+- **Rust** + **wasm-pack** (only needed when modifying Core)
+
+### Installation & Build
 
 ```bash
-npm install @yoin/client @yoin/core
-# or
-pnpm add @yoin/client @yoin/core
+# Clone the project
+git clone <repo-url>
+cd yoin
+
+# Install dependencies
+pnpm install
+
+# Build everything (WASM Core → Client SDK)
+pnpm build
 ```
 
-### Basic Usage
+> Runnable demo apps, API test sandboxes, the Node.js relay server, and the Cloudflare Worker live in the companion [`Yoin-apps-example`](https://github.com/s9900930/Yoin-apps-example) repository.
+
+### Get Started in 30 Seconds
+
+**Vanilla TypeScript**:
 
 ```typescript
-import { initYoin, YoinClient, createDbPlugin, createUndoPlugin } from '@yoin/client';
+import { initYoin, YoinClient, createMapProxy, createDbPlugin, createUndoPlugin } from '@yoin/client';
 
-// 1. Initialize the WASM engine
+// 1. Initialize the WASM engine (only needed once globally)
 await initYoin();
 
-// 2. Create a client and connect to the Cloudflare Worker
-const client = new YoinClient({
-  url: 'wss://your-worker.workers.dev',
-  docId: 'my-document',
-});
-
-// 3. Install plugins
+// 2. Create a client and mount plugins
 const { plugin: dbPlugin } = createDbPlugin({ dbName: 'my-app' });
 const { plugin: undoPlugin, undo, redo } = createUndoPlugin();
-client.use(dbPlugin).use(undoPlugin);
 
-// 4. Work with data - Text
-client.insertText(0, 'Hello World');
-console.log(client.getText()); // "Hello World"
+const client = new YoinClient({
+  url: 'wss://your-worker.workers.dev',
+  docId: 'my-room',
+})
+  .use(dbPlugin)
+  .use(undoPlugin);
 
-// 5. Work with data - Map
-client.setMap('settings', 'theme', 'dark');
-client.setMapDeep('settings', ['nested', 'value'], 42);
-console.log(client.getMap('settings')); // { theme: "dark", nested: { value: 42 } }
+// 3. Read/write directly via Proxy — automatic CRDT sync!
+const state = createMapProxy<{ count: number; title: string }>(client, 'app-state');
+state.count = 1;           // → Automatically synced to all connected peers (native number preserved)
+state.title = 'Hello Yoin';
 
-// 6. Work with data - Array
-client.pushArray('logs', { action: 'login', time: Date.now() });
-console.log(client.getArray('logs'));
-
-// 7. Subscribe to changes
-const unsubscribe = client.subscribe((text) => {
-  document.getElementById('editor')!.textContent = text;
+// 4. Subscribe to a specific container for isolated updates
+client.subscribeMap('app-state', () => {
+  console.log('State updated:', state.count, state.title);
 });
-
-// 8. Cleanup
-client.destroy();
 ```
 
-### Proxy Transparent Writes
-
-```typescript
-import { createMapProxy, createArrayProxy } from '@yoin/client';
-
-const settings = createMapProxy<{ theme: string; fontSize: number }>(client, 'settings');
-settings.theme = 'dark';       // Automatically triggers CRDT write + network sync
-settings.fontSize = 16;
-
-const logs = createArrayProxy<string>(client, 'logs');
-logs.push('user joined');      // Automatically triggers pushArray
-```
-
-### React Integration
+**React**:
 
 ```tsx
-import { YoinProvider, useYoinMap, useYoinArray, useYoinAwareness } from '@yoin/client/react';
+import {
+  YoinProvider,
+  useYoinMap,
+  useYoinText,
+  useYoinAwareness,
+  useYoinStatus,
+  useYoinUndo,
+} from '@yoin/client/react';
 
 function App() {
   return (
-    <YoinProvider client={client}>
-      <SettingsPanel />
-      <UserList />
+    <YoinProvider config={{ url: 'wss://...', docId: 'my-room' }}>
+      <Counter />
     </YoinProvider>
   );
 }
 
-function SettingsPanel() {
-  const settings = useYoinMap<{ theme: string }>('app-settings');
-  return (
-    <select value={settings.theme} onChange={e => settings.theme = e.target.value}>
-      <option value="light">Light</option>
-      <option value="dark">Dark</option>
-    </select>
-  );
-}
+function Counter() {
+  const state = useYoinMap<{ count: number }>('app-state');
+  const { text, insert, format } = useYoinText('content');
+  const { states, setLocalState } = useYoinAwareness();
+  const status = useYoinStatus();
+  const { undo, redo } = useYoinUndo();
 
-function UserList() {
-  const awareness = useYoinAwareness();
   return (
-    <ul>
-      {[...awareness.values()].map(user => (
-        <li key={user.clientId} style={{ color: user.color }}>{user.name}</li>
-      ))}
-    </ul>
+    <div>
+      <p>Status: {status} | Online: {states.size}</p>
+      <button onClick={() => { state.count = (state.count || 0) + 1; }}>
+        Count: {state.count ?? 0}
+      </button>
+      <button onClick={undo}>Undo</button>
+      <button onClick={redo}>Redo</button>
+    </div>
   );
 }
 ```
+
+---
 
 ## Project Structure
 
 ```
 yoin/
 ├── packages/
-│   ├── core/           # Rust CRDT engine → WebAssembly
-│   │   ├── src/lib.rs  # YoinDoc: Text / Map / Array / Undo / Sync API
-│   │   └── pkg-web/    # wasm-pack output (auto-generated)
-│   └── client/         # @yoin/client TypeScript SDK
-│       └── src/
-│           ├── YoinClient.ts    # Micro-kernel: CRDT + networking + plugins
-│           ├── network.ts       # WebSocket + offline queue + auto-reconnect
-│           ├── storage.ts       # IndexedDB adapter
-│           ├── proxy.ts         # Map / Array Proxy transparent writes
-│           ├── plugin.ts        # Plugin interface definition
-│           ├── plugins/db.ts    # IndexedDB persistence plugin
-│           ├── plugins/undo.ts  # Undo / Redo plugin
-│           ├── logger.ts        # Development debug logging plugin
-│           ├── react/index.tsx  # React Hooks (Provider / useYoinMap / ...)
-│           └── wasm/loader.ts   # WASM initializer
-├── docs/               # Technical docs
-└── tests/              # Core and package integration tests
+│   ├── core/               # @yoin/core — Rust CRDT core (Yrs → WASM)
+│   └── client/             # @yoin/client — TypeScript micro-kernel SDK + React Hooks
+├── docs/                   # Comprehensive technical documentation
+└── tests/                  # Monorepo integration tests
 ```
 
-The example applications and Cloudflare Workers locate in a separate [`Yoin-apps-example`](../Yoin-apps-example/) repository. This repository contains `apps/`, `examples/`, `yoin-worker/`, `server/`, and deployment scripts, and links to the build artifacts of this core project via package files in `vendor/`.
+| Package | Description | Size |
+|---------|-------------|------|
+| `@yoin/core` | Rust Yrs wrapper, compiled to WebAssembly with native `yrs::Any` & rich-text Delta support | ~236 KB (WASM) |
+| `@yoin/client` | TypeScript micro-kernel SDK + Plugins + Proxy | ~26 KB (ESM) |
+| `@yoin/client/react` | React 18 Hooks (`useYoinMap`, `useYoinArray`, `useYoinText`, etc.) | ~3.5 KB (ESM) |
 
-## Development Guide
+---
 
-### Prerequisites
+## Architecture Overview
 
-- Node.js ≥ 18
-- pnpm ≥ 9
-- Rust toolchain + wasm-pack (for building Core)
-- Cloudflare account (for deploying Worker / Pages)
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Application Layer                     │
+│            React Hooks  /  Proxy  /  Direct API          │
+├─────────────────────────────────────────────────────────┤
+│                  @yoin/client (TS SDK)                    │
+│  ┌───────────┐ ┌──────────┐ ┌─────────┐ ┌────────────┐  │
+│  │YoinClient │ │ Network  │ │ Storage │ │  Plugins   │  │
+│  │ (Micro-   │ │(WebSocket│ │(Indexed │ │ (DB/Undo/  │  │
+│  │  Kernel)  │ │ +Queue)  │ │  DB)    │ │  Logger)   │  │
+│  └─────┬─────┘ └────┬─────┘ └─────────┘ └────────────┘  │
+├────────┼────────────┼───────────────────────────────────┤
+│        ▼            ▼                                    │
+│  ┌───────────┐ ┌──────────────────────────────────────┐  │
+│  │@yoin/core │ │        Relay Server / Worker         │  │
+│  │(Rust WASM)│ │ (Cloudflare DO / Node.js WS Relay)   │  │
+│  └───────────┘ └──────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
 
-### Common Commands
+---
+
+## Common Commands
 
 ```bash
-# Install dependencies
-pnpm install
+# Development & Build
+pnpm build              # Full build (WASM → SDK)
+pnpm build:wasm         # Build Rust → WASM only
+pnpm build:client       # Build Client SDK only
 
-# Core build (WASM → SDK)
-pnpm build
-
-# Run tests
-pnpm test            # Unit + integration tests
-pnpm test:e2e        # Playwright E2E tests
-pnpm test:coverage   # Coverage report
-
-# Type checking
-pnpm typecheck
-
+# Testing & Type Checking
+pnpm test               # Run all tests (Unit + Real WASM + Integration)
+pnpm test:unit          # Unit & real WASM integration tests (Vitest, 123 tests)
+pnpm test:integration   # Monorepo structure tests (54 checks)
+pnpm test:coverage      # Test coverage report
+pnpm typecheck          # TypeScript type checking
 ```
 
-For example startup instructions, please refer to the [`Yoin-apps-example`](https://github.com/Saisai568/Yoin-apps-example) repository;
+---
 
-For example, you can execute `pnpm --filter yoin-worker dev` in that directory to start the Cloudflare
-Worker local development server.
+## Documentation Guide
+
+| Document | Description |
+|----------|-------------|
+| **[Beginner Demo Guide](BEGINNER_DEMO_GUIDE.md)** | Step-by-step tutorial for building a dual-tab real-time sticky note app |
+| **[API Tutorial (ZH)](docs/API_TUTORIAL._zh_Hant.md)** | Hands-on tutorial verified against `@yoin/client` v0.1.2 |
+| **[API Reference](docs/API_en.md)** | Complete signatures and examples for all public classes, functions, types, Hooks, and plugins |
+| **[Architecture Doc](docs/ARCHITECTURE_en.md)** | System layering, CRDT data flow, three-way handshake protocol, micro-kernel design |
+| **[Contributing Guide](docs/CONTRIBUTING_en.md)** | Environment setup, dev workflow, writing tests, commit conventions |
+| **[Changelog](CHANGELOG.md)** | Release history and upgrade notes |
+
+---
 
 ## Tech Stack
 
-| Layer | Technology | Description |
-|-------|-----------|-------------|
-| CRDT Engine | Rust + Yrs + wasm-bindgen | Automatic conflict resolution, incremental diff sync |
-| Client SDK | TypeScript + tsup | Micro-kernel architecture, dual-format output (ESM / CJS) |
-| Backend Relay | Cloudflare Workers + Durable Objects | Hibernation API, on-demand wake-up |
-| Frontend | React 19 / Vanilla JS | Hooks + Proxy integration |
-| Build Tools | Vite 7 + wasm-pack + tsup | WASM support + HMR |
-| Testing | Vitest + Playwright | Unit / E2E dual-track testing |
-| Deployment | Cloudflare Pages + Workers | Global edge distribution |
+| Layer | Technology |
+|-------|------------|
+| **CRDT Core** | Rust, [Yrs](https://docs.rs/yrs) 0.18, wasm-bindgen |
+| **Client SDK** | TypeScript (strict), tsup (ESM + CJS), Zod |
+| **Frontend Integration** | React 18 (`useSyncExternalStore`), JavaScript Proxy |
+| **Offline Storage** | IndexedDB (`StorageAdapter` cached connection) |
+| **Testing Framework** | Vitest, happy-dom, Real WASM Integration Tests |
+| **Monorepo** | pnpm workspace |
 
-## API Stability
-
-Yoin follows [Semantic Versioning 2.0.0](https://semver.org/):
-
-- **0.x versions (current):** API may include breaking changes between minor versions. Lock to patch versions:
-  ```json
-  "dependencies": {
-    "@yoin/client": "~0.1.0"  // Only accept patch updates
-  }
-  ```
-
-- **1.0.0 onwards:**
-  - **MAJOR**: Incompatible API changes
-  - **MINOR**: New backward-compatible features
-  - **PATCH**: Backward-compatible bug fixes
-
-### Currently Stable APIs
-✅ `YoinClient` core methods  
-✅ `createDbPlugin`, `createUndoPlugin`  
-⚠️ `Awareness` API may change in 0.2.0  
-⚠️ React Hooks signatures may evolve  
-
-## Documentation
-
-- 📖 [API Reference](docs/API.md) — Complete SDK documentation
-- 🏛️ [Architecture Guide](docs/ARCHITECTURE.md) — System design and internals
-- 👥 [Contributing Guide](docs/CONTRIBUTING.md) — Development workflow
-- 📄 [Changelog](CHANGELOG.md) — Version history and migration guides
-
-## Known Issues
-
-- Browser compatibility not fully tested on Safari < 14 and mobile browsers
-- Test coverage at 57% overall — `storage.ts` and `db.ts` plugins need additional tests
-- No built-in telemetry or error tracking integration yet
-
-See [GitHub Issues](https://github.com/Saisai568/yoin/issues) for the full list.
-
-## Contributing
-
-Contributions are welcome! Please read [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
+---
 
 ## License
 
-MIT License
+MIT

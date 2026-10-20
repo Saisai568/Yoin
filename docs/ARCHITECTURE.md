@@ -1,661 +1,333 @@
 [繁體中文](ARCHITECTURE.md) | [English](ARCHITECTURE_en.md)
 
-# Yoin 架構文件
+# Yoin 系統架構設計文件
+
+> 版本：`@yoin/client` v0.1.2
 
 ## 目錄
 
-- [系統總覽](#系統總覽)
-- [四層架構](#四層架構)
-- [Layer 1：CRDT 引擎（Rust + WASM）](#layer-1crdt-引擎rust--wasm)
-- [Layer 2：WebSocket 中繼（Cloudflare Worker）](#layer-2websocket-中繼cloudflare-worker)
-- [Layer 3：客戶端 SDK（TypeScript）](#layer-3客戶端-sdktypescript)
-- [Layer 4：應用層](#layer-4應用層)
-- [通訊協議](#通訊協議)
-- [同步機制](#同步機制)
-- [離線與持久化](#離線與持久化)
-- [Awareness 系統](#awareness-系統)
-- [Monorepo 基礎設施](#monorepo-基礎設施)
-- [部署架構](#部署架構)
-- [未來優化方向](#未來優化方向)
+- [設計哲學](#設計哲學)
+- [系統分層架構](#系統分層架構)
+- [Monorepo 結構](#monorepo-結構)
+- [Layer 1：Rust CRDT 核心 (`@yoin/core`)](#layer-1rust-crdt-核心-yoincore)
+  - [為什麼選擇 Yrs + WASM](#為什麼選擇-yrs--wasm)
+  - [YoinDoc 內部結構與型別保真](#yoindoc-內部結構與型別保真)
+  - [差量更新機制（State Vector Diff）](#差量更新機制state-vector-diff)
+- [Layer 2：TypeScript 微核心 SDK (`@yoin/client`)](#layer-2typescript-微核心-sdk-yoinclient)
+  - [微核心 + 插件架構](#微核心--插件架構)
+  - [資料流：本地寫入與容器隔離通知](#資料流本地寫入與容器隔離通知)
+  - [資料流：遠端同步與快照預載](#資料流遠端同步與快照預載)
+  - [三向交握同步協議（含空 Diff 抑制）](#三向交握同步協議含空-diff-抑制)
+  - [Awareness 感知子系統](#awareness-感知子系統)
+  - [網路層與暫態離線佇列](#網路層與暫態離線佇列)
+  - [Proxy 透明讀寫原理](#proxy-透明讀寫原理)
+  - [React 18 整合原理](#react-18-整合原理)
+- [Layer 3：中繼伺服器與持久化架構](#layer-3中繼伺服器與持久化架構)
+- [測試架構](#測試架構)
+- [建置管線](#建置管線)
 
 ---
 
-## 系統總覽
+## 設計哲學
 
-Yoin 是一個 **Local-First 即時協作狀態同步框架**。核心理念是讓任何 Web 應用在幾行程式碼內獲得多人即時協作能力，且在離線環境下仍可正常運作。
+Yoin 的設計圍繞四個核心原則：
 
-```
-┌─────────────────────────────────────────────────┐
-│                   Browser A                     │
-│  ┌─────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │  App UI │→ │ YoinClient│→ │ YoinDoc(WASM) │  │
-│  └─────────┘  └────┬─────┘  └───────────────┘  │
-│                    │ WebSocket                    │
-└────────────────────┼────────────────────────────┘
-                     │
-          ┌──────────┴──────────┐
-          │  Cloudflare Edge    │
-          │  ┌────────────────┐ │
-          │  │  YoinRoom (DO) │ │  ← Durable Object (按房間隔離)
-          │  │  WebSocket     │ │
-          │  │  Blind Relay   │ │
-          │  └────────────────┘ │
-          └──────────┬──────────┘
-                     │
-┌────────────────────┼────────────────────────────┐
-│                    │ WebSocket                    │
-│  ┌─────────┐  ┌───┴──────┐  ┌───────────────┐  │
-│  │  App UI │→ │ YoinClient│→ │ YoinDoc(WASM) │  │
-│  └─────────┘  └──────────┘  └───────────────┘  │
-│                   Browser B                     │
-└─────────────────────────────────────────────────┘
-```
+1. **Local-First（本地優先）**
+   所有讀寫操作直接在本地記憶體中的 WASM CRDT 文件上執行，延遲為零。網路層僅負責在背景非同步傳遞二進位差量（Diff），即使完全離線也能正常編輯與持久化。
 
-**設計哲學**：每個瀏覽器持有完整的 CRDT 文件副本（Replica），伺服器僅負責轉發。所有合併邏輯在客戶端由 Rust WASM 執行，確保即使伺服器不可用也能離線操作。
+2. **Micro-Kernel（微核心）**
+   `YoinClient` 核心僅保留「CRDT 操作、網路同步、容器級訂閱、Awareness 感知」四項職責。IndexedDB 持久化、全容器 Undo/Redo、除錯日誌等功能全部透過 `YoinPlugin` 介面以插件形式掛載。
+
+3. **Zero-Config Sync（零設定同步）**
+   開發者只需透過 `createMapProxy`、`createArrayProxy` 或 React Hooks（`useYoinMap`、`useYoinArray`、`useYoinText`）讀寫普通 JavaScript 物件，底層自動完成 CRDT 事務編碼、二進位封包組裝與 WebSocket 廣播。
+
+4. **Dumb Pipe Relay + Snapshot Hydration（無狀態轉發 + 快照預載）**
+   WebSocket 中繼層（Cloudflare Worker Durable Objects 或 Node.js Relay）不需要解析 CRDT 內容，所有合併運算都在客戶端 WASM 中完成；同時支援透過 `exportSnapshot()` / `applySnapshot()` 與後端資料庫結合，實現新房間秒級預載。
 
 ---
 
-## 四層架構
+## 系統分層架構
 
 ```
-┌─────────────────────────────────────────────┐
-│  Layer 4: Application                       │
-│  事件綁定、DOM 渲染、rAF 節流、React Hooks    │
-├─────────────────────────────────────────────┤
-│  Layer 3: @yoin/client (SDK)                │
-│  YoinClient 微核心 + Plugin + Proxy         │
-│  ├── network.ts    WebSocket + 離線佇列      │
-│  ├── storage.ts    IndexedDB 適配器          │
-│  ├── proxy.ts      Map/Array Proxy 透明寫入  │
-│  ├── plugin.ts     Plugin 介面              │
-│  ├── plugins/      db, undo 內建插件         │
-│  ├── logger.ts     除錯日誌插件              │
-│  ├── react/        React Hooks 整合層        │
-│  └── wasm/         WASM 初始化器             │
-├─────────────────────────────────────────────┤
-│  Layer 2: yoin-worker                       │
-│  Cloudflare Durable Objects WebSocket Relay │
-├─────────────────────────────────────────────┤
-│  Layer 1: @yoin/core (Rust → WASM)          │
-│  Yrs CRDT 引擎 + wasm-bindgen 綁定          │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Application Layer                            │
+│   React Components (useYoinMap / useYoinArray / useYoinText)        │
+│   Vanilla JS (createMapProxy / createArrayProxy / Direct API)       │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────────────┐
+│                     @yoin/client (TypeScript)                        │
+│                                                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │                    YoinClient (Micro-Kernel)                   │  │
+│  │  • Text / Rich-Text Delta / Map CRUD / Array CRUD             │  │
+│  │  • Container-Scoped Subscriptions (Map / Array / Text)        │  │
+│  │  • Snapshot Hydration (applySnapshot / exportSnapshot)        │  │
+│  │  • Zod Schema Validation (setMap / batchSet / Array)          │  │
+│  │  • Awareness Engine (Throttle 30ms + Heartbeat + GC)          │  │
+│  └──────┬────────────────────┬────────────────────┬──────────────┘  │
+│         │                    │                    │                  │
+│  ┌──────▼──────┐     ┌──────▼───────┐     ┌──────▼──────────────┐  │
+│  │   Plugins   │     │NetworkManager│     │   WASM Loader       │  │
+│  │ • DbPlugin  │     │ • WebSocket  │     │ • Singleton Lock    │  │
+│  │ • UndoPlugin│     │ • Non-Trans  │     │ • Memory Cleanup    │  │
+│  │ • Logger    │     │   Offline Q  │     │   (doc.free)        │  │
+│  └─────────────┘     └──────┬───────┘     └──────┬──────────────┘  │
+└─────────────────────────────┼────────────────────┼──────────────────┘
+                              │                    │
+               WebSocket      │                    │ FFI (wasm-bindgen)
+            (Binary Protocol) │                    │
+┌─────────────────────────────┼────────────────────▼──────────────────┐
+│                             │         @yoin/core (Rust WASM)        │
+│                             │  ┌─────────────────────────────────┐  │
+│                             │  │ YoinDoc                         │  │
+│                             │  │  • yrs::Doc                     │  │
+│                             │  │  • yrs::UndoManager (All Types) │  │
+│                             │  │  • js_to_any / any_to_js        │  │
+│                             │  │  • Rich Text Delta + Formatting │  │
+│                             │  └─────────────────────────────────┘  │
+└─────────────────────────────┼───────────────────────────────────────┘
+                              │
+┌─────────────────────────────▼───────────────────────────────────────┐
+│                Relay Server (Yoin-apps-example)                     │
+│  • Cloudflare Worker + Durable Objects / Node.js WS Relay           │
+│  • Room Routing + Binary Broadcast (excluding sender)               │
+└─────────────────────────────────────────────────────────────────────┘
 ```
-
-每一層只依賴下層，不可跨層呼叫。Layer 2（Worker）與 Layer 3（Client）透過二進制協議溝通，兩者程式碼完全獨立。
 
 ---
 
-## Layer 1：CRDT 引擎（Rust + WASM）
+## Monorepo 結構
 
-### 技術選型
+```
+yoin/
+├── pnpm-workspace.yaml          # Workspace 定義 (packages/*)
+├── package.json                 # Root scripts & devDependencies
+├── packages/
+│   ├── core/                    # @yoin/core — Rust WASM CRDT 引擎
+│   │   ├── Cargo.toml           # Rust 依賴 (yrs 0.18, wasm-bindgen, serde, js-sys)
+│   │   ├── src/
+│   │   │   └── lib.rs           # YoinDoc 完整實作
+│   │   └── pkg-web/             # wasm-pack 編譯產物 (core.js, core_bg.wasm, core.d.ts)
+│   └── client/                  # @yoin/client — TypeScript SDK
+│       ├── package.json         # Dual Exports: "." 與 "./react"
+│       ├── tsup.config.ts       # ESM + CJS 雙格式打包設定
+│       ├── vitest.config.ts     # 單元測試與覆蓋率設定
+│       └── src/
+│           ├── index.ts         # 主入口匯出
+│           ├── YoinClient.ts    # 微核心主類別
+│           ├── types.ts         # 全域型別與協議常數 (含 TextDeltaOp)
+│           ├── plugin.ts        # YoinPlugin 介面定義
+│           ├── network.ts       # WebSocket 連線、重連、暫態過濾佇列
+│           ├── storage.ts       # IndexedDB 封裝 (含連線單例快取與 close)
+│           ├── proxy.ts         # createMapProxy / createArrayProxy
+│           ├── logger.ts        # 內建 Logger 插件
+│           ├── wasm/
+│           │   └── loader.ts    # WASM 單例初始化器
+│           ├── plugins/
+│           │   ├── index.ts
+│           │   ├── db.ts        # IndexedDB 自動防抖存檔與載入後同步插件
+│           │   └── undo.ts      # 全容器自動擴展範圍之 Undo/Redo 插件
+│           ├── react/
+│           │   └── index.tsx    # React 18 Hooks (Provider, Map, Array, Text, Status, Undo)
+│           └── __tests__/       # Vitest 單元測試與真實 WASM 整合測試 (123 tests)
+├── tests/
+│   └── monorepo-integrity.test.mjs  # Monorepo 結構完整性測試 (54 checks)
+└── docs/                        # 技術文件
+```
 
-| 選擇 | 原因 |
-|------|------|
-| **Yrs** (Yjs Rust 實作) | 成熟的 CRDT 函式庫，支援 Text / Map / Array / UndoManager |
-| **wasm-bindgen** | Rust ↔ JS 零成本互操作 |
-| **serde-wasm-bindgen** | 直接序列化為原生 JS 物件，省去 JSON.parse 成本 |
-| **wee_alloc** | 專為 WASM 設計的微型記憶體分配器 |
+> 示範應用程式（Vanilla / React Demo、API 測試沙盒）、Node.js Relay 伺服器與 Cloudflare Worker 位於獨立的 [`Yoin-apps-example`](https://github.com/s9900930/Yoin-apps-example) 儲存庫。
 
-### YoinDoc 核心結構
+---
+
+## Layer 1：Rust CRDT 核心 (`@yoin/core`)
+
+### 為什麼選擇 Yrs + WASM
+
+- **極致效能與二進位體積**：Yrs 是 Yjs 官方的 Rust 移植版，記憶體佔用更低，編譯出的 `core_bg.wasm` 約 236 KB。
+- **跨語言一致的二進位格式**：使用 Yjs v1 Encoding（`encode_state_as_update_v1` / `Update::decode_v1`），與整個 Yjs 生態系二進位完全相容。
+
+### YoinDoc 內部結構與型別保真
+
+`packages/core/src/lib.rs` 定義了匯出給 JavaScript 的 `YoinDoc` 結構體：
 
 ```rust
 #[wasm_bindgen]
 pub struct YoinDoc {
-    doc: Doc,                               // Yrs CRDT Document
-    undo_manager: RefCell<Option<UndoManager>>, // Lazy 初始化
+    doc: Doc,
+    undo_manager: Option<UndoManager>,
 }
 ```
 
-**增量差異模式**：所有寫入 API 遵循相同流程：
+**原生型別保真 (`js_to_any` / `any_to_js`)**：
+在 v0.1.2 中，Yoin 移除了早期將字串透過 `serde_json::from_str` 強制解析的做法，改為在 Rust 端實作遞迴的 `js_to_any(&JsValue) -> yrs::Any` 與 `any_to_js(&yrs::Any) -> JsValue` 雙向轉換：
+- JavaScript 的 `"123"` 對應 `Any::String("123")`，`123` 對應 `Any::Number(123.0)`，`"true"` 對應 `Any::String("true")`，`true` 對應 `Any::Bool(true)`。
+- 巢狀 JavaScript Array 與 Object 遞迴轉換為 `Any::Array` 與 `Any::Map`。
 
-```
-sv_before = doc.transact().state_vector()
-  → 執行 CRDT 操作
-  → diff = doc.transact().encode_diff_v1(&sv_before)
-  → 回傳 diff (Uint8Array)
-```
+**支援的 CRDT 操作一覽**：
 
-每次只回傳增量差異而非全量狀態，大幅減少網路傳輸量。
+| 類別 | Rust 方法 | 對應 Yrs 型別 | 說明 |
+|------|-----------|---------------|------|
+| **Text / Rich Text** | `insert_text`, `insert_text_with_attrs`, `delete_text`, `format_text`, `apply_text_delta`, `clear_text`, `get_text`, `get_text_delta` | `TextRef` | 支援多具名文字容器、格式屬性與 Quill Delta |
+| **Map** | `map_set`, `map_delete`, `map_get`, `map_get_all`, `map_set_deep`, `batch_set` | `MapRef` + `MapPrelim` | 完整鍵值 CRUD、深層任意型別更新與批量事務 |
+| **Array** | `array_push`, `array_insert`, `array_delete`, `array_get_all` | `ArrayRef` | 有序列表新增、定點插入、區間刪除與查詢 |
+| **Sync** | `encode_state_vector`, `encode_diff`, `apply_update` | `StateVector` + `Update` | 二進位狀態向量與差量同步 |
+| **Undo** | `init_undo_manager`, `expand_undo_scope`, `expand_undo_scope_for`, `undo`, `redo` | `UndoManager` | 支援動態擴展 Map / Array / Text 容器的撤銷範圍 |
 
-### Origin 追蹤
+### 差量更新機制（State Vector Diff）
+
+每個寫入操作都遵循相同的模式，只回傳**本次操作產生的最小二進位差量（Diff）**：
 
 ```rust
-fn origin_local()  -> Origin { Origin::from("yoin-local") }
-fn origin_remote() -> Origin { Origin::from("yoin-remote") }
-```
-
-- 本地操作使用 `origin_local()`
-- 遠端 `apply_update` 使用 `origin_remote()`
-- UndoManager 監聽 `origin_local()`，確保 undo 僅撤銷自己的操作
-
-### API 矩陣
-
-| 資料類型 | 寫入 | 讀取 |
-|---------|------|------|
-| **Text** | `insert_text`, `delete_text` | `get_text` |
-| **Map** | `map_set`, `map_set_deep`, `batch_set` | `map_get`, `map_get_all`, `map_get_json` |
-| **Array** | `array_push` | `array_get`, `array_get_all` |
-| **Sync** | `apply_update` | `get_state_vector`, `export_update`, `export_diff`, `snapshot`, `get_missing_updates` |
-| **Undo** | `undo`, `redo`, `enable_undo`, `expand_undo_scope` | — |
-
-### 建置產出
-
-```
-packages/core/
-├── src/lib.rs          # Rust 原始碼 (~300 行)
-├── Cargo.toml          # opt-level="z", lto=true, strip=true
-└── pkg-web/            # wasm-pack --target web 輸出
-    ├── core_bg.wasm    # ~300 KB (gzip ~120 KB)
-    ├── core.js         # JS glue code
-    └── core.d.ts       # TypeScript 型別
+let sv_before = self.doc.transact().state_vector();
+{
+    let mut txn = self.doc.transact_mut();
+    // 執行 CRDT 寫入...
+}
+let txn = self.doc.transact();
+txn.encode_diff_v1(&sv_before)
 ```
 
 ---
 
-## Layer 2：WebSocket 中繼（Cloudflare Worker）
+## Layer 2：TypeScript 微核心 SDK (`@yoin/client`)
 
-### 架構：Durable Objects + Hibernation API
+### 微核心 + 插件架構
 
 ```
-              ┌─────────────────────────────────┐
-              │       Cloudflare Edge Node       │
-              │                                  │
-  Client A ──→│  Worker (Router)                 │
-  Client B ──→│  ├─ /room/abc → YoinRoom("abc") │
-  Client C ──→│  ├─ /room/xyz → YoinRoom("xyz") │
-              │  └─ ?room=... → YoinRoom(...)    │
-              │                                  │
-              │  YoinRoom  (Durable Object)      │
-              │  ├─ ctx.acceptWebSocket()        │
-              │  ├─ webSocketMessage → 廣播       │
-              │  └─ webSocketClose → 清理         │
+                    ┌─────────────────────┐
+                    │   Local Mutation    │
+                    │ (setMap/insertText) │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  WASM YoinDoc Op    │
+                    │  → returns diff     │
+                    └──────────┬──────────┘
+                               │
+              ┌────────────────▼────────────────┐
+              │  Plugin: onBeforeUpdate(diff)   │
+              └────────────────┬────────────────┘
+                               │
+              ┌────────────────▼────────────────┐
+              │  Network: broadcast([1, ...diff])│
+              └────────────────┬────────────────┘
+                               │
+              ┌────────────────▼────────────────┐
+              │  Plugin: onAfterUpdate(diff)    │
+              │  Hooks:  onLocalUpdate / onDoc  │
+              └────────────────┬────────────────┘
+                               │
+              ┌────────────────▼────────────────┐
+              │  Container-Scoped Subscribers   │
+              │  (Map / Array / Text + Global)  │
               └─────────────────────────────────┘
 ```
 
-### 關鍵設計
+### 資料流：本地寫入與容器隔離通知
 
-| 特性 | 說明 |
-|------|------|
-| **房間隔離** | 每個 `docId` 對應一個 Durable Object 實例，天然隔離 |
-| **Hibernation API** | `ctx.acceptWebSocket()` 模式，DO 在無訊息時可休眠，節省計費時間 |
-| **Blind Relay** | 伺服器不維護 CRDT 文件，收到二進制訊息直接轉發給同房間其他 WebSocket |
-| **Join Room 過濾** | `MSG_JOIN_ROOM (type=4)` 由 Server 攔截，不轉發 |
+當本地呼叫 `client.setMap('shapes', 'rect1', data)` 時：
+1. WASM 計算出二進位 `diff` 並透過 WebSocket 廣播。
+2. `notifyMapSubscribers('shapes')` **只會通知訂閱了 `'shapes'` 的元件**（以及全域 `subscribe` 監聽器），正在編輯 `'article'` 文字容器或 `'layers'` 陣列的元件完全不會重新渲染，確保 60FPS 畫布流暢度。
 
-> **安全邊界：** 目前 relay 是 public-room blind relay，不提供身份驗證、授權或文件持久化。
-> 任何取得 room URL 的客戶端都可讀寫該房間；不可用於需要存取控制的私密文件。
-> 部署受保護文件前，Worker 必須在 WebSocket upgrade 時驗證短期 token 與 room scope，
-> 並限制訊息型別、大小、頻率與每房間連線數。
+### 資料流：遠端同步與快照預載
 
-### URL 路由
+當收到遠端 `MSG_SYNC_STEP_2` 或呼叫 `applySnapshot(snapshot)` 時：
+1. `this.doc.apply_update(payload)` 將二進位更新無衝突合併進本地 WASM 文件。
+2. 觸發 `onDocUpdate` 鉤子（讓 `YoinDbPlugin` 排程防抖存檔）。
+3. 呼叫 `notifyAllSubscribers()` 更新所有已訂閱的 Map、Array、Text 與全域監聽器。
 
-支援兩種格式：
-- **路徑式**：`wss://worker.dev/room/{roomId}`
-- **Query 式**：`wss://worker.dev?room={roomId}`
+### 三向交握同步協議（含空 Diff 抑制）
 
-Worker 從 URL 提取 `roomId` → `env.YOIN_ROOM.idFromName(roomId)` → 取得 DO stub → `fetch()` 轉發。
+為了避免多人在線時產生 $O(N^2)$ 空封包廣播風暴，`YoinClient` 內建 `hasNonEmptyUpdate(diff)` 檢查（忽略長度為 0 或 `[0, 0]` 的空 Yrs update），僅在確實存在差異時才發送 `MSG_SYNC_STEP_2`。
 
-### Wrangler 設定
+### Awareness 感知子系統
 
-```jsonc
-{
-  "name": "yoin-worker",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-02-12",
-  "compatibility_flags": ["nodejs_compat"],
-  "durable_objects": {
-    "bindings": [{ "name": "YOIN_ROOM", "class_name": "YoinRoom" }]
-  },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["YoinRoom"] }
-  ]
-}
-```
+Awareness 採用獨立通道（`MSG_AWARENESS = 3`），並包含：
+- **節流機制（Throttling）**：預設 30ms 節流，最高約 33 次/秒。
+- **心跳與垃圾回收（GC）**：每 5 秒廣播一次心跳，超過 30 秒未回應自動移除游標 DOM。
+- **暫態標記（`{ transient: true }`）**：離線期間不會排入 `NetworkManager` 的重送佇列。
 
----
+### 網路層與暫態離線佇列
 
-## Layer 3：客戶端 SDK（TypeScript）
+`NetworkManager` 支援：
+- **指數退避重連**：`1000ms * 2^attempt`（上限 30 秒，最多 50 次；耗盡後轉為 `'failed'` 狀態）。
+- **非暫態離線佇列**：離線期間僅將實際的 CRDT 更新（`MSG_SYNC_STEP_2`）放入 `messageQueue`，忽略 `transient: true` 的封包，重連成功後依序沖刷（Flush）。
 
-### 微核心架構
+### Proxy 透明讀寫原理
 
-`YoinClient` 作為微核心，只包含最基本的功能：
+- **`createMapProxy`**：攔截 `get`（不存在鍵回傳 `undefined`，巢狀物件自動包覆深層 Proxy）、`set`（自動呼叫 `setMap` 或 `setMapDeep`）、`deleteProperty`（自動呼叫 `deleteMap`）、`has` 與 `ownKeys`。
+- **`createArrayProxy`**：每次存取皆從 `client.getArray` 讀取即時狀態，並攔截 `.push()`、`.splice()`、`.pop()`、`.shift()`、`.unshift()` 自動轉換為 `pushArray` / `insertArray` / `deleteArray`。
 
-```
-YoinClient (微核心)
-├── CRDT 操作 (Text / Map / Array)
-├── 網路連線 (NetworkProvider)
-├── Awareness 系統 (節流 + GC)
-├── Schema 驗證 (Zod)
-└── Plugin 生命週期管理
-```
+### React 18 整合原理
 
-所有擴展功能（持久化、Undo、日誌）透過 Plugin 系統掛載。
-
-### 模組職責
-
-| 模組 | 職責 | 關鍵類別 / 函式 |
-|------|------|-----------------|
-| `YoinClient.ts` | 微核心：CRDT + 網路 + 插件 | `YoinClient` |
-| `network.ts` | WebSocket 管理 + 離線佇列 + 自動重連 | `NetworkProvider` |
-| `storage.ts` | IndexedDB 封裝 | `StorageAdapter` |
-| `proxy.ts` | JS Proxy 透明寫入 | `createMapProxy`, `createArrayProxy` |
-| `plugin.ts` | 插件介面定義 | `YoinPlugin` interface |
-| `plugins/db.ts` | IndexedDB 持久化 | `YoinDbPlugin` |
-| `plugins/undo.ts` | Undo / Redo | `YoinUndoPlugin` |
-| `logger.ts` | 開發除錯日誌 | `createLoggerPlugin` |
-| `react/index.tsx` | React Hooks 整合 | `YoinProvider`, `useYoinMap`, `useYoinArray` |
-| `wasm/loader.ts` | WASM 初始化（冪等） | `initYoin`, `isYoinInitialized` |
-
-### Plugin 生命週期
-
-```
-client.use(plugin)
-    │
-    ├─ plugin.onInstall(client)      ← 初始化
-    │
-    ├─ [本地寫入]
-    │   ├─ plugin.onBeforeUpdate()   ← 廣播前
-    │   └─ plugin.onAfterUpdate()    ← 廣播後
-    │
-    ├─ [遠端更新]
-    │   └─ plugin.onAfterUpdate()    ← 套用後
-    │
-    └─ client.destroy()
-        └─ plugin.onDestroy()        ← 清理
-```
-
-### 測試架構與驗證分層
-
-測試命令必須由根目錄執行，確保新增測試會被 canonical suite 收集：
-
-```powershell
-pnpm test                 # client unit/integration seam + monorepo integrity
-pnpm test:unit            # packages/client 的 Vitest suite
-pnpm test:coverage        # Vitest V8 coverage
-pnpm test:integration     # workspace/package integrity checks
-```
-
-目前的測試分層如下：
-
-| 層級 | 工具 | 覆蓋範圍 | 外部依賴策略 |
-|---|---|---|---|
-| Unit | Vitest + happy-dom | client API、proxy、schema、awareness、network state machine | WebSocket、WASM 以 deterministic mocks 取代 |
-| Lifecycle integration seam | Vitest fake IndexedDB + plugin tests | restore-before-save、forceSave、async destroy、undo/redo hooks、offline resend | IndexedDB 用 fake adapter；錯誤/延遲由測試控制 |
-| Protocol seam | Vitest WebSocket fake | binary frame、reconnect、in-flight requeue、room sync handler | 不啟動外部 relay，直接注入 frame |
-| Core compile | `cargo check` | Rust/Yrs API 與 UndoManager 編譯正確性 | 不依賴瀏覽器 |
-| Browser/real integration | Playwright + 真實 WASM/IndexedDB/Worker | 多 client convergence、reload persistence、真實 relay ACL/rate limits | 尚未接入；需要產生 `pkg-web`、Worker source 與 browser binaries |
-
-測試必須至少覆蓋以下回歸保證：
-
-1. WebSocket 在 `send` 後斷線時，update 會在重連後重新送出。
-2. IndexedDB restore 未完成前，local write 不得先覆蓋或遺失；`destroy()` 必須等待最後一次 save。
-3. Undo/redo 必須觸發與一般 local update 相同的 plugin hooks、listeners 與 persistence events。
-4. map、text、array 的 undo scope 都必須可被註冊。
-5. 所有測試都必須在 command exit code 為 0 時才算通過；coverage 不得取代行為測試。
-
-### 測試限制與升級路徑
-
-- Docker daemon 不可用時，不能執行容器化 relay/Worker integration；不得因此宣稱多客戶端同步已驗證。
-- 目前 workspace 沒有 `yoin-worker` 原始碼，Worker 的 authentication、authorization、message validation、rate limit 測試必須在 Worker repository 補上。
-- clean checkout 若沒有 `packages/core/pkg-web`，client typecheck/build 會失敗；CI 應先執行 `pnpm build:wasm`，再執行 client typecheck/build。
-- 下一階段應新增真實 browser suite：兩個 client、真實 WASM、IndexedDB reload、relay close-after-send、同房間隔離與未授權 upgrade 測試。
-
-### 資料流
-
-```
-使用者操作 (UI Event)
-    │
-    ▼
-YoinClient.setMap() / insertText() / pushArray()
-    │
-    ├─ Zod Schema 驗證 (若有定義)
-    │
-    ▼
-YoinDoc (WASM) ── 執行 CRDT 操作 → 回傳增量 diff
-    │
-    ├─ plugins.onBeforeUpdate(diff)
-    │
-    ├─ NetworkProvider.broadcast(message)
-    │   ├─ WebSocket 已連線 → 直接 send（斷線事件會回收 in-flight 訊息）
-    │   └─ 離線 → 放入 messageQueue，重連後重送
-    │
-    ├─ notifyListeners() → UI 更新
-    │
-    ├─ plugins.onAfterUpdate(diff)
-    │
-    └─ emitDocUpdate(diff) / emitLocalUpdate(diff)
-```
-
-### 建置產出
-
-```
-packages/client/
-├── tsup.config.ts      # 雙入口 (index + react)，輸出 ESM + CJS + DTS
-└── dist/
-    ├── index.js        # ESM 主入口
-    ├── index.cjs       # CJS 主入口
-    ├── index.d.ts      # 型別定義
-    ├── react.js        # React Hooks (ESM)
-    ├── react.cjs       # React Hooks (CJS)
-    └── react.d.ts      # React 型別定義
-```
+`@yoin/client/react` 使用 React 18 的 `useSyncExternalStore`：
+- `useYoinMap(mapName)` 綁定 `client.subscribeMap(mapName, cb)`，並在快照變更時更新 Proxy 物件參考。
+- `useYoinArray(arrayName)` 綁定 `client.subscribeArray(arrayName, cb)`。
+- `useYoinText(textName)` 綁定 `client.subscribeText(textName, cb)`，同時回傳純文字 `text`、富文本 `delta` 與編輯方法。
 
 ---
 
-## Layer 4：應用層
+## Layer 3：中繼伺服器與持久化架構
 
-### Demo 架構
-
-Demo 同時展示兩種前端整合方式：
-
-| 檔案 | 模式 | 說明 |
-|------|------|------|
-| `main.ts` | Vanilla JS | 直接操作 DOM + rAF 節流渲染 |
-| `App.tsx` | React | Hook + Proxy 零樣板整合 |
-| `renderers.ts` | 共用 | 純函式游標 / 頭像 DOM 工廠 |
+Yoin 客戶端可搭配任意支援上述 1-byte Header 協議的 WebSocket Relay 運作（範例實作位於 `Yoin-apps-example`）：
+- **Cloudflare Worker + Durable Objects (`yoin-worker`)**：邊緣無狀態轉發。
+- **Node.js WebSocket Relay (`server`)**：輕量本地開發與自架中繼。
+- **快照預載整合**：後端可定期或於房間關閉時儲存 `client.exportSnapshot()` 的二進位結果；新客戶端進房時先呼叫 `client.applySnapshot(snapshot)` 即可秒級完成大型文件載入。
 
 ---
 
-## 通訊協議
-
-### 1-Byte Header 二進制協議
+## 測試架構
 
 ```
-┌──────────┬────────────────────────────┐
-│ 1 byte   │ N bytes                    │
-│ msg_type │ payload (Uint8Array)       │
-└──────────┴────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                   Test Pyramid (177 Checks)                  │
+│                                                             │
+│          ┌───────────────────────────────────┐              │
+│          │   Monorepo Integrity (54 checks)  │              │
+│          │   tests/monorepo-integrity.test   │              │
+│          ├───────────────────────────────────┤              │
+│          │   Real WASM Integration (8 tests) │              │
+│          │   src/__tests__/real-wasm.test.ts │              │
+│          ├───────────────────────────────────┤              │
+│          │   Unit Tests (115 tests)          │              │
+│          │   Vitest + happy-dom + fake-idb   │              │
+│          └───────────────────────────────────┘              │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-| Type | 值 | Payload | 說明 |
-|------|---|---------|------|
-| `MSG_SYNC_STEP_1` | `0` | State Vector | 請求同步 |
-| `MSG_SYNC_STEP_2` | `1` | CRDT Update / Diff | 資料傳輸 |
-| `MSG_SYNC_STEP_1_REPLY` | `2` | State Vector | 回覆同步請求 |
-| `MSG_AWARENESS` | `3` | JSON (UTF-8 encoded) | 感知狀態 |
-| `MSG_JOIN_ROOM` | `4` | Room name (UTF-8) | 加入房間 |
+| 測試檔案 | 測試數量 | 涵蓋模組 |
+|----------|----------|----------|
+| `real-wasm.test.ts` | 8 | 真實 `core_bg.wasm` 整合測試（型別保真、Map/Array CRUD、富文本 Delta、雙端同步、Undo/Redo） |
+| `YoinClient.test.ts` | 36 | `YoinClient` 全方法、容器訂閱、快照預載、空 diff 抑制、Schema 驗證、Awareness |
+| `plugins.test.ts` | 21 | `YoinDbPlugin`、`YoinUndoPlugin`（含全容器自動擴展）、`LoggerPlugin` |
+| `network.test.ts` | 15 | `NetworkManager` 連線、重連退避、暫態離線佇列過濾 |
+| `proxy.test.ts` | 15 | `createMapProxy`（含 `delete`/`in`/`keys`）、`createArrayProxy`（含 `splice`/`pop`/`unshift`） |
+| `storage.test.ts` | 12 | `StorageAdapter` IndexedDB 快照存取與連線快取 |
+| `loader.test.ts` | 9 | `initYoin` 單例鎖、並行呼叫、錯誤恢復 |
+| `types.test.ts` | 7 | 協議常數驗證 |
+| `monorepo-integrity.test.mjs` | 54 | Workspace 結構、套件匯出、建置產物驗證 |
 
 ---
 
-## 同步機制
-
-### 三向交握
-
-新加入的 Client A 與既有 Client B 之間的同步流程：
+## 建置管線
 
 ```
-Client A (新加入)         Server (Relay)          Client B (既有)
-    │                         │                       │
-    │── JOIN_ROOM ──────────→ │                       │
-    │── SYNC_STEP_1 (sv_A) ─→│── SYNC_STEP_1 ──────→│
-    │                         │                       │
-    │                         │←── SYNC_STEP_2 ─────│  diff(sv_A)
-    │←── SYNC_STEP_2 ────────│                       │
-    │                         │←── SYNC_STEP_1_REPLY │  sv_B
-    │←── SYNC_STEP_1_REPLY ──│                       │
-    │                         │                       │
-    │── SYNC_STEP_2 (diff) ─→│── SYNC_STEP_2 ──────→│  diff(sv_B)
-    │                         │                       │
-    ▼       雙方同步完成       ▼                       ▼
+Step 1: pnpm build:wasm
+  packages/core/src/lib.rs
+    ──(cargo build --target wasm32-unknown-unknown --release)──►
+    ──(wasm-bindgen --target web --out-dir pkg-web)──►
+  packages/core/pkg-web/
+    ├── core.js          (JS glue code)
+    ├── core_bg.wasm     (~236 KB WebAssembly binary)
+    └── core.d.ts        (TypeScript declarations)
+
+Step 2: pnpm build:client
+  packages/client/src/{index.ts, react/index.tsx}
+    ──(tsup: esbuild + dts)──►
+  packages/client/dist/
+    ├── index.js / index.cjs / index.d.ts     (Main SDK)
+    ├── react.js / react.cjs / react.d.ts     (React Hooks)
+    └── core_bg.wasm                          (Copied by onSuccess hook)
 ```
-
-1. A 發送自己的 State Vector
-2. B 根據 A 的 SV 計算 diff 並回傳，同時回傳 B 的 SV
-3. A 根據 B 的 SV 計算 diff 給 B
-4. 雙方 State 收斂
-
-### 增量更新
-
-每次本地操作：
-1. 記錄 `sv_before`（操作前的 State Vector）
-2. 執行 CRDT 操作
-3. `encode_diff_v1(sv_before)` 取得增量差異
-4. 只廣播差異（通常幾十到幾百 bytes）
-
----
-
-## 離線與持久化
-
-### 離線佇列（NetworkProvider）
-
-```
-Online:  操作 → broadcast() → WebSocket.send()
-Offline: 操作 → broadcast() → messageQueue.push()
-Reconnect: messageQueue.forEach(send) → 清空佇列
-```
-
-- WebSocket 斷線後 3 秒自動重連
-- 重連後先 flush 佇列，再執行三向交握
-- 佇列中的訊息保持順序
-
-### IndexedDB 持久化（DbPlugin）
-
-```
-操作 → onDocUpdate → scheduleSave() ─[debounce 1s]→ persist()
-                                                        │
-                              IndexedDB ← export_update() (全量快照)
-```
-
-- 防抖機制避免頻繁寫入
-- 啟動時 `loadFromDisk()` → `apply_update()` 還原狀態
-- `forceSave()` 可手動觸發立即儲存
-
----
-
-## Awareness 系統
-
-### 設計
-
-Awareness（感知狀態）用於廣播不寫入 CRDT 的瞬態資訊：游標位置、在線狀態、使用者名稱等。
-
-```
-使用者移動滑鼠
-    │
-    ▼ (rAF 節流)
-setAwareness({ cursorX, cursorY })
-    │
-    ├─ 更新本地 awarenessStates Map
-    ├─ 通知本地 Awareness 監聽器
-    └─ 節流廣播 (leading-edge + trailing)
-        │
-        ▼ (30ms throttle)
-    broadcastAwareness() → MSG_AWARENESS → WebSocket
-```
-
-### 節流機制
-
-```
-t=0    setAwareness()  → 立即廣播 (leading edge)
-t=10   setAwareness()  → 標記 pending
-t=20   setAwareness()  → 標記 pending (覆蓋)
-t=30   throttle 到期   → 廣播最新 pending (trailing edge)
-```
-
-### Ghost Busting（幽靈清除）
-
-```
-每 3 秒掃描一次：
-  for (clientId, state) in awarenessStates:
-    if (now - state.timestamp > 30s) && (clientId ≠ myClientId):
-      awarenessStates.delete(clientId)
-      notifyAwarenessListeners()
-```
-
-心跳機制（每 5 秒）確保活躍用戶不被清除。
-
----
-
-## Monorepo 基礎設施
-
-### pnpm Workspace
-
-```yaml
-packages:
-  - packages/*    # @yoin/core, @yoin/client
-  - apps/*        # @yoin/demo, @yoin/api-test
-  - yoin-worker   # Cloudflare Worker
-```
-
-### 套件依賴圖
-
-```
-@yoin/core (Rust WASM, 無 JS 依賴)
-    ↑
-@yoin/client (workspace:*)
-    ↑
-@yoin/demo (workspace:*)
-
-yoin-worker (獨立，無 workspace 內部依賴)
-```
-
-### 建置順序
-
-```
-1. wasm-pack build (packages/core)    → pkg-web/
-2. tsup (packages/client)             → dist/
-3. vite build (apps/demo)             → dist/
-```
-
-嚴格的拓撲排序：Core → Client → Demo。
-
----
-
-## 部署架構
-
-### Cloudflare 部署
-
-```
-                ┌──────────────────────┐
-                │  Cloudflare Network  │
-                │                      │
-                │  Workers             │
-  WebSocket ──→ │  ├─ yoin-worker      │
-                │  └─ YoinRoom (DO)    │
-                │                      │
-                │  Pages               │
-  HTTPS ──────→ │  └─ yoin-client      │ ← apps/demo/dist
-                │     (Static Assets)  │
-                └──────────────────────┘
-```
-
-| 服務 | 平台 | 部署指令 |
-|------|------|---------|
-| WebSocket Worker | Cloudflare Workers | `pnpm deploy:worker` |
-| Demo 前端 | Cloudflare Pages | `pnpm deploy:pages` |
-| 全棧一鍵 | 兩者 | `.\deploy.bat` 或 `pnpm deploy` |
-
-### deploy.bat 流程
-
-```
-[1/5] wasm-pack build        → packages/core/pkg-web/
-[2/5] tsup build             → packages/client/dist/
-[3/5] wrangler deploy        → Cloudflare Workers
-[4/5] vite build             → apps/demo/dist/
-[5/5] wrangler pages deploy  → Cloudflare Pages
-```
-
----
-
-## 未來優化方向
-
-### 短期（High Priority）
-
-#### 1. Smart Server（伺服器端 CRDT）
-
-目前 Worker 為 Blind Relay（盲轉發），不維護 CRDT 狀態。升級為 Smart Server：
-
-- **Durable Object 內持有 `YoinDoc` 副本**（需在 Worker 內載入 WASM 或使用 Yjs JS 版本）
-- 新 Client 加入時，Server 直接回傳全量 Snapshot，不需等待其他 Client
-- **Server-side Compaction**：定期壓縮歷史，減少 State Vector 體積
-
-```
-Client A ──→ YoinRoom (DO) ←── Client B
-                 │
-                 ├─ 維護 CRDT Doc
-                 ├─ 新連線 → 直接傳送 Snapshot
-                 └─ 定期 Compaction
-```
-
-#### 2. 離線佇列持久化
-
-目前 `messageQueue` 存在記憶體中，頁面重新整理後遺失。改為寫入 IndexedDB：
-
-```
-broadcast() → 離線 → IndexedDB queue → 重啟後恢復 → 重連時 flush
-```
-
-#### 3. 子文件（Sub-documents）
-
-大型協作應用常需要多個獨立同步區域（如多個頁面、不同資料表）。利用 Yrs Sub-doc 機制：
-
-- 按需載入子文件，減少初始傳輸量
-- 每個 Sub-doc 可獨立同步、獨立持久化
-
-### 中期
-
-#### 4. 二進制 Awareness
-
-目前 Awareness 使用 JSON over binary，改為純二進制編碼可再減少約 40% 頻寬。
-
-#### 5. 衝突解析回呼
-
-提供 `onConflict(local, remote)` 鉤子，讓開發者自訂合併策略：
-
-```typescript
-client.onConflict('settings', (local, remote) => {
-  return remote.timestamp > local.timestamp ? remote : local;
-});
-```
-
-#### 6. 選擇性同步
-
-只同步目前使用者關注的 Map / Array，降低頻寬與 CPU：
-
-```typescript
-client.subscribe('settings', (data) => { /* 只收 settings 變更 */ });
-```
-
-#### 7. 權限控制
-
-在 Worker 層加入 JWT 驗證與讀寫權限：
-
-```
-Client → JWT Token → Worker 驗證 → 允許/拒絕 → DO
-```
-
-### 長期
-
-#### 8. 歷史版本瀏覽
-
-利用 Yrs Snapshot 實現時間旅行：
-
-```typescript
-const history = client.getHistory();
-const version = client.restoreSnapshot(history[5]);
-```
-
-#### 9. 大型文件支援
-
-- 增量載入策略：首次只載入最新 Snapshot，歷史 diff 按需拉取
-- 壓縮傳輸（Worker 端 gzip / brotli）
-
-#### 10. 多框架支援
-
-將 React Hooks 模式擴展到 Vue / Svelte / Solid：
-
-```
-@yoin/client           # 核心 SDK（框架無關）
-@yoin/client/react     # React Hooks (已實現)
-@yoin/client/vue       # Vue Composables
-@yoin/client/svelte    # Svelte Stores
-@yoin/client/solid     # Solid Signals
-```
-
-#### 11. SDK 發佈至 npm
-
-將 `@yoin/client` 發佈為獨立 npm 套件，供外部開發者安裝使用。需要解決 WASM 檔案載入策略（CDN vs bundler 自動解析）。
-
-#### 12. 監控與可觀測性
-
-- Worker 端加入 Cloudflare Analytics
-- Client 端加入效能指標（同步延遲、訊息大小、重連次數）
-- 提供 Dashboard Plugin

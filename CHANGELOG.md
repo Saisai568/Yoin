@@ -1,202 +1,56 @@
 # Changelog
 
-All notable changes to the Yoin project will be documented in this file.
+All notable changes to the **Yoin** project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [0.1.1] - 2026-02-18
+## [0.1.2] - 2026-10-21
 
-### 🐛 Bug Fixes
+### Added
+- **Rich Text Delta & Multi-Text Support (`@yoin/core`, `@yoin/client`)**:
+  - Added `insert_text_with_attrs`, `format_text`, `apply_text_delta`, and `get_text_delta` in Rust WASM (`YoinDoc`).
+  - Added `formatText(index, length, attributes, textName?)`, `applyTextDelta(ops, textName?)`, and `getTextDelta(textName?)` on `YoinClient`, plus exported `TextDeltaOp` interface (Quill-compatible `[{ insert, attributes }]`).
+  - Extended `insertText`, `deleteText`, `clearText`, and `getText` with an optional `textName` parameter (defaults to `'content'`) for multiple independent rich-text containers per document.
+- **Full Map & Array CRUD Operations (`@yoin/core`, `@yoin/client`)**:
+  - Added `deleteMap(mapName, key)` (and alias `deleteMapKey`), `hasMapKey(mapName, key)`.
+  - Added `insertArray(arrayName, index, item)`, `deleteArray(arrayName, index, length?)`, and `moveArray(arrayName, fromIndex, toIndex)`.
+  - Added `expand_undo_scope_for(container_type, name)` in Rust WASM so Undo/Redo tracks Map, Array, and Text containers dynamically.
+- **Container-Scoped Subscriptions (`@yoin/client`)**:
+  - Added `subscribeMap(mapName, listener)`, `subscribeArray(arrayName, listener)`, and `subscribeText(textName, listener)` to isolate UI re-renders by container.
+- **Server Snapshot Hydration & Sync Control (`@yoin/client`)**:
+  - Added `applySnapshot(snapshot: Uint8Array)`, `exportSnapshot(): Uint8Array`, and `syncWithPeers()`.
+  - Added `BroadcastOptions { transient?: boolean }`, `getQueueLength()`, and `clearQueue()` on `NetworkManager`.
+- **React Hooks (`@yoin/client/react`)**:
+  - Added `useYoinText(textName?)` hook returning `{ text, delta, insert, deleteText, format, applyDelta, clear }`.
+- **Real WASM Integration Test Suite**:
+  - Added `packages/client/src/__tests__/real-wasm.test.ts` testing compiled `core_bg.wasm` binary directly (native type fidelity, CRUD, rich-text deltas, two-peer sync, and undo/redo).
 
-#### `YoinUndoPlugin` — auto-enable undo & auto-expand undo scope
+### Changed
+- **Native Type Fidelity in Rust WASM (`@yoin/core`)**:
+  - Replaced stringified JSON coercion (`JSON.parse` / `serde_json::from_str`) with recursive `js_to_any(&JsValue) -> yrs::Any` conversion across `map_set`, `map_set_deep`, `batch_set`, `array_push`, and `array_insert`. Strings like `"123"` or `"true"` are no longer coerced into numbers or booleans.
+  - Upgraded `map_set_deep` to accept any `JsValue` (strings, booleans, objects, arrays, numbers) rather than only `f64`.
+- **Enhanced JavaScript Proxies (`@yoin/client`)**:
+  - `createMapProxy` now returns `undefined` for missing keys, preserves native types, and supports `delete proxy.key`, `'key' in proxy`, `Object.keys(proxy)`, and deep nested object proxies.
+  - `createArrayProxy` now reads live state on every trap and supports mutating methods `.push()`, `.splice()`, `.pop()`, `.shift()`, and `.unshift()`.
+- **React Hook Subscriptions (`@yoin/client/react`)**:
+  - `useYoinMap` and `useYoinArray` now subscribe via `subscribeMap` and `subscribeArray` and re-memoize their proxy reference whenever the underlying snapshot updates.
+  - `useYoinStatus` now uses `client.subscribeNetwork(cb)` (which returns an unsubscribe function) instead of overwriting `network.onStatusChange`.
 
-**Problem:** Installing `createUndoPlugin()` did not automatically enable undo tracking in the CRDT document, so calling `undo()` after `setMap()` had no effect unless the user manually called `doc.enable_undo()` and `doc.expand_undo_scope(mapName)`.
-
-**Fix:**
-
-- `onInstall()` now calls `doc.enable_undo()` automatically.
-- `client.setMap` and `client.setMapDeep` are wrapped so that the first write to any map name automatically calls `doc.expand_undo_scope(mapName)`. Subsequent writes to the same map are **idempotent** — `expand_undo_scope` is only called once per map name.
-- `onDestroy()` restores the original `setMap` / `setMapDeep` implementations so the plugin leaves no side-effects after removal.
-
-**Migration:** No API changes. Existing code that already called `doc.enable_undo()` / `doc.expand_undo_scope()` manually will continue to work correctly.
-
----
-
-## [0.1.0] - 2026-02-16
-
-### 🎉 First Public Release
-
-Initial release of Yoin - a local-first real-time collaborative state synchronization framework.
-
-#### Added
-- 🦀 **Rust/WASM CRDT Engine** powered by [Yrs](https://github.com/y-crdt/y-crdt)
-- 📦 **TypeScript Client SDK** with Micro-kernel + Plugin architecture
-- ☁️ **Cloudflare Durable Objects** WebSocket relay server with Hibernation API
-- 💾 **IndexedDB Persistence** via `createDbPlugin`
-- ↩️ **Undo/Redo Support** via `createUndoPlugin`
-- 👥 **Awareness System** for real-time cursors and presence
-- ✨ **Proxy-based Transparent Writes** (`createMapProxy`, `createArrayProxy`)
-- ⚛️ **React Hooks** (`useYoinMap`, `useYoinArray`, `useYoinAwareness`)
-- 🔒 **Schema Validation** with Zod integration
-- 📡 **Offline-First Architecture** with automatic sync on reconnect
-
----
-
-## [0.1.0-rc.1] - 2026-02-16
-
-### 🔒 Security & Stability Hardening (Pre-release Code Review Fixes)
-
-This release addresses all **CRITICAL** issues identified in the pre-release code review.
-
-#### 🚨 CRITICAL Fixes
-
-##### 1. Version Number Consistency
-- **Fixed:** Unified version numbers across all packages to `0.1.0`
-  - Root `package.json`: `0.0.0` → `0.1.0`
-  - `@yoin/core`: `0.2.0` → `0.1.0`
-  - `@yoin/client`: `0.1.0` (unchanged)
-- **Impact:** Prevents npm publish failures and workspace dependency conflicts
-
-##### 2. Network Reconnection Logic
-- **Fixed:** Implemented exponential backoff with max retry limit in `NetworkProvider`
-- **Before:** Infinite reconnection every 3 seconds → resource exhaustion risk
-- **After:** 
-  - Exponential backoff: 1s → 2s → 4s → 8s → ... (capped at 30s)
-  - Random jitter to prevent thundering herd
-  - Maximum 10 reconnection attempts (configurable via `NetworkProviderOptions`)
-  - New `'failed'` network status after max attempts
-  - Manual `reconnect()` method for user-triggered retry
-  - Proper cleanup via `disconnect()` method
-- **Added Types:**
-  - `NetworkStatus` now includes `'failed'` state
-  - New `NetworkProviderOptions` interface with `maxReconnects`, `baseDelayMs`, `maxDelayMs`
-- **Impact:** Prevents battery drain on mobile devices and resource exhaustion
-
-##### 3. Cloudflare Worker Rate Limiting
-- **Fixed:** Added comprehensive protection against abuse in `yoin-worker`
-- **Added:**
-  - Per-IP sliding window rate limiter (60 requests per minute)
-  - Returns `429 Too Many Requests` with `Retry-After: 60` header
-  - Message size guard: 1 MB limit per WebSocket message
-  - Room ID length validation: 128 character maximum
-  - CORS preflight support (`OPTIONS` method)
-  - Automatic cleanup of expired rate limit records (every 2 minutes)
-- **Impact:** Prevents DDoS attacks and cost overruns
-
-##### 4. WASM Initialization Error Handling
-- **Fixed:** Robust WASM loading with automatic retry and clear error messages
-- **Added:**
-  - WebAssembly support pre-flight check
-  - Automatic retry with incremental backoff (3 attempts by default: 500ms → 1000ms → 1500ms)
-  - New `YoinInitError` class with `cause` property for debugging
-  - Pre-flight check in `YoinClient` constructor prevents usage before init
-- **Breaking Change:** `YoinClient` now throws if WASM not initialized
-  ```typescript
-  // ✅ Correct usage
-  await initYoin();
-  const client = new YoinClient({ ... });
-  
-  // ❌ Will throw YoinInitError
-  const client = new YoinClient({ ... }); // without await initYoin()
-  ```
-- **Impact:** Prevents application crashes from WASM load failures
-
-#### Changed
-- `NetworkProvider` constructor now accepts optional `NetworkProviderOptions`
-- `initYoin()` now accepts optional `retries` parameter (default: 3)
-- `YoinClient.destroy()` now properly calls `network.disconnect()`
-
-#### Added Exports
-- `YoinInitError` - Custom error class for WASM initialization failures
-- `NetworkProviderOptions` - Configuration interface for reconnection behavior
-
-#### Internal Improvements
-- Enhanced code comments and JSDoc documentation
-- Better error messages for developer experience
+### Fixed
+- **Broadcast Storm Suppression**: Added `hasNonEmptyUpdate()` check during `MSG_SYNC_STEP_1` and `MSG_SYNC_STEP_1_REPLY` handling to prevent broadcasting empty `[0, 0]` diff packets across N-peer rooms.
+- **Transient Offline Queueing**: Awareness, heartbeat, and handshake packets now pass `{ transient: true }` so they do not bloat the offline message queue while disconnected.
+- **IndexedDB Persistence & Sync**: Cached `IDBDatabase` connection in `StorageAdapter` (with `close()` cleanup), removed duplicate `onAfterUpdate` save scheduling in `YoinDbPlugin`, and triggered `syncWithPeers()` after `loadFromDisk()` if already connected.
+- **Zod Validation in `batchSet`**: `batchSet` now validates all entries against configured Zod schemas before committing the transaction.
+- **WASM Memory Cleanup**: `client.destroy()` now invokes `this.doc.free?.()` to release linear WASM memory.
+- **Package Dependency Hygiene**: Moved `vite`, `vite-plugin-wasm`, and `vite-plugin-top-level-await` from `dependencies` to optional `peerDependencies` and `devDependencies` in `@yoin/client`.
 
 ---
 
-## Known Issues & Limitations
+## [0.1.0] - 2026-02-15
 
-### 0.1.0
-- **Browser Support:** Not fully tested on Safari < 14 and mobile browsers
-- **Test Coverage:** 57% overall, `storage.ts` and `db.ts` plugin at 0%
-- **Monitoring:** No production telemetry or error tracking integration yet
-- **Documentation:** Missing upgrade guide and troubleshooting section
-
----
-
-## Migration Guide
-
-### From 0.1.0-alpha to 0.1.0
-
-No breaking changes for existing code. The CRITICAL fixes are backward compatible except:
-
-1. **WASM Initialization Check (Breaking):**
-   ```typescript
-   // Before: might crash silently
-   const client = new YoinClient({ url: '...', docId: '...' });
-   
-   // After: must await initYoin() first
-   await initYoin();
-   const client = new YoinClient({ url: '...', docId: '...' });
-   ```
-
-2. **Network Status (Non-breaking Addition):**
-   ```typescript
-   // New 'failed' status available
-   client.subscribeNetwork((status) => {
-     if (status === 'failed') {
-       // Show retry UI or fallback
-       client.network.reconnect(); // Manual retry
-     }
-   });
-   ```
-
-3. **Worker Deployment:**
-   - No code changes required
-   - Rate limiting is automatic
-   - Monitor 429 responses in Cloudflare Analytics
-
----
-
-## Upgrade Instructions
-
-### npm/pnpm
-```bash
-# Update dependencies
-pnpm update @yoin/client @yoin/core
-
-# Or install specific version
-pnpm add @yoin/client@0.1.0 @yoin/core@0.1.0
-```
-
-### Cloudflare Worker
-```bash
-cd yoin-worker
-pnpm run deploy
-```
-
----
-
-## Contributors
-
-- [Saisai568](https://github.com/Saisai568) - Project Lead
-- GitHub Copilot - Code Review & Architecture Consultation
-
----
-
-## Links
-
-- [GitHub Repository](https://github.com/Saisai568/yoin)
-- [API Documentation](./docs/API.md)
-- [Architecture Guide](./docs/ARCHITECTURE.md)
-- [Contributing Guidelines](./docs/CONTRIBUTING.md)
-
----
-
-[0.1.0]: https://github.com/Saisai568/yoin/releases/tag/v0.1.0
-[0.1.0-rc.1]: https://github.com/Saisai568/yoin/compare/v0.1.0-alpha...v0.1.0-rc.1
+### Added
+- Initial release of `@yoin/core` (Rust Yrs WASM wrapper) and `@yoin/client` (TypeScript micro-kernel SDK).
+- Basic Text, Map, and Array CRDT operations, Awareness protocol, IndexedDB persistence (`YoinDbPlugin`), Undo/Redo (`YoinUndoPlugin`), Proxy wrappers, and React 18 Hooks.
