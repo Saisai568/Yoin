@@ -9,7 +9,7 @@ export class YoinDoc {
      * in a single atomic transaction.
      */
     apply_text_delta(name: string, ops: Array<any>): Uint8Array;
-    apply_update(update: Uint8Array): void;
+    apply_update(update: Uint8Array): any;
     array_delete(array_name: string, index: number, length: number): Uint8Array;
     /**
      * Returns native JS value for a single array index
@@ -26,6 +26,11 @@ export class YoinDoc {
      * entries is a JS Array of [mapName, key, value] triples.
      */
     batch_set(entries: Array<any>): Uint8Array;
+    /**
+     * Create a sticky relative position byte array for a given text container index (Y-07).
+     * assoc < 0 leans left (Before), assoc >= 0 leans right (After).
+     */
+    create_relative_position(name: string, index: number, assoc: number): Uint8Array;
     delete_text(name: string, index: number, length: number): Uint8Array;
     /**
      * Explicitly enable undo support. Called automatically on first undo()/redo().
@@ -73,10 +78,24 @@ export class YoinDoc {
      * Kept for backward compatibility - alias of map_get_all
      */
     map_get_json(map_name: string): any;
+    /**
+     * Insert or replace a nested map at `root_map[key]` with given key-value entries in a single atomic transaction.
+     * This enables property-level CRDT merges!
+     */
+    map_insert_nested(root_map_name: string, key: string, entries_obj: any): Uint8Array;
     map_set(map_name: string, key: string, value: any): Uint8Array;
     map_set_deep(root_map_name: string, path: Array<any>, value: any): Uint8Array;
+    /**
+     * Update multiple fields of an existing nested map at `root_map[key]`.
+     * If the nested map doesn't exist, it will be created.
+     */
+    map_update_nested(root_map_name: string, key: string, updates_obj: any): Uint8Array;
     constructor();
     redo(): Uint8Array;
+    /**
+     * Resolve a sticky relative position back to an absolute index in the current text document (Y-07).
+     */
+    resolve_relative_position(bytes: Uint8Array): any;
     snapshot(): Uint8Array;
     undo(): Uint8Array;
 }
@@ -102,6 +121,8 @@ export interface InitOutput {
     readonly yoindoc_delete_text: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly yoindoc_map_set: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly yoindoc_map_delete: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly yoindoc_map_insert_nested: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly yoindoc_map_update_nested: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly yoindoc_map_set_deep: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly yoindoc_batch_set: (a: number, b: number, c: number) => void;
     readonly yoindoc_array_push: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -109,11 +130,13 @@ export interface InitOutput {
     readonly yoindoc_array_delete: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly yoindoc_get_text: (a: number, b: number, c: number, d: number) => void;
     readonly yoindoc_get_text_delta: (a: number, b: number, c: number) => number;
+    readonly yoindoc_create_relative_position: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly yoindoc_resolve_relative_position: (a: number, b: number, c: number, d: number) => void;
     readonly yoindoc_map_get_all: (a: number, b: number, c: number) => number;
     readonly yoindoc_map_get: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly yoindoc_array_get_all: (a: number, b: number, c: number) => number;
     readonly yoindoc_array_get: (a: number, b: number, c: number, d: number) => number;
-    readonly yoindoc_apply_update: (a: number, b: number, c: number) => void;
+    readonly yoindoc_apply_update: (a: number, b: number, c: number, d: number) => void;
     readonly yoindoc_export_update: (a: number, b: number) => void;
     readonly yoindoc_get_state_vector: (a: number, b: number) => void;
     readonly yoindoc_export_diff: (a: number, b: number, c: number, d: number) => void;

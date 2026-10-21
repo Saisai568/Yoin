@@ -9,18 +9,27 @@ export interface TextDeltaOp {
   attributes?: Record<string, any>;
 }
 
-export interface YoinConfig {
+export interface YoinConnectParams {
+  url: string;
+  protocols?: string[];
+}
+
+export interface YoinConfig<TAwareness = Record<string, any>> {
   url: string;
   dbName?: string;
   docId: string;
+  mode?: 'mesh' | 'server';
+  autoConnect?: boolean;
+  getConnectParams?: () => Promise<YoinConnectParams>;
   awarenessThrottleMs?: number;
   heartbeatIntervalMs?: number;
   heartbeatTimeoutMs?: number;
   schemas?: Record<string, z.ZodTypeAny>;
   networkOptions?: NetworkProviderOptions;
+  onError?: (error: Error) => void;
 }
 
-export interface AwarenessState {
+export type AwarenessState<T = Record<string, any>> = T & {
   clientId: string;
   name: string;
   color: string;
@@ -31,16 +40,22 @@ export interface AwarenessState {
   device?: 'mobile' | 'desktop';
   lastActive?: number;
   timestamp: number;
-}
+};
 
-export type AwarenessPartial = Partial<
-  Omit<AwarenessState, 'clientId' | 'timestamp'>
+export type AwarenessPartial<T = Record<string, any>> = Partial<
+  Omit<AwarenessState<T>, 'clientId' | 'timestamp'>
 >;
 
 export type CursorRenderer = (color: string, name: string) => HTMLElement;
 
-export type AwarenessCallback = (
-  states: Map<string, AwarenessState>,
+export type AwarenessCallback<T = Record<string, any>> = (
+  states: Map<string, AwarenessState<T>>,
 ) => void;
 
-export type NetworkStatus = 'connecting' | 'online' | 'offline' | 'failed';
+export type NetworkStatus = 'connecting' | 'online' | 'synced' | 'offline' | 'failed';
+
+export interface YoinServerError {
+  code: string;
+  message: string;
+  seq?: number;
+}

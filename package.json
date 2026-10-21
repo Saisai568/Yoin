@@ -1,10 +1,10 @@
 {
   "name": "yoin-monorepo",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {
-    "build:wasm": "cd packages/core && wasm-pack build --target web --out-dir pkg-web",
+    "build:wasm": "cd packages/core && wasm-pack build --target web --out-dir pkg-web --out-name core",
     "build:client": "pnpm --filter @yoin/client build",
     "build": "pnpm build:wasm && pnpm build:client",
     "test": "pnpm --filter @yoin/client test && node tests/monorepo-integrity.test.mjs",

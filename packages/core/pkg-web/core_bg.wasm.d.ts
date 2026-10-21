@@ -16,6 +16,8 @@ export const yoindoc_apply_text_delta: (a: number, b: number, c: number, d: numb
 export const yoindoc_delete_text: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const yoindoc_map_set: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const yoindoc_map_delete: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+export const yoindoc_map_insert_nested: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const yoindoc_map_update_nested: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const yoindoc_map_set_deep: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const yoindoc_batch_set: (a: number, b: number, c: number) => void;
 export const yoindoc_array_push: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -23,11 +25,13 @@ export const yoindoc_array_insert: (a: number, b: number, c: number, d: number, 
 export const yoindoc_array_delete: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const yoindoc_get_text: (a: number, b: number, c: number, d: number) => void;
 export const yoindoc_get_text_delta: (a: number, b: number, c: number) => number;
+export const yoindoc_create_relative_position: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+export const yoindoc_resolve_relative_position: (a: number, b: number, c: number, d: number) => void;
 export const yoindoc_map_get_all: (a: number, b: number, c: number) => number;
 export const yoindoc_map_get: (a: number, b: number, c: number, d: number, e: number) => number;
 export const yoindoc_array_get_all: (a: number, b: number, c: number) => number;
 export const yoindoc_array_get: (a: number, b: number, c: number, d: number) => number;
-export const yoindoc_apply_update: (a: number, b: number, c: number) => void;
+export const yoindoc_apply_update: (a: number, b: number, c: number, d: number) => void;
 export const yoindoc_export_update: (a: number, b: number) => void;
 export const yoindoc_get_state_vector: (a: number, b: number) => void;
 export const yoindoc_export_diff: (a: number, b: number, c: number, d: number) => void;

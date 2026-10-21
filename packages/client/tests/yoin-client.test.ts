@@ -418,6 +418,39 @@ describe('YoinClient', () => {
       await client2.destroy();
     });
 
+    it('Y-03: selectively notifies container listeners on remote SYNC_STEP_2', async () => {
+      const client2 = new YoinClient(createConfig({ docId: 'room-remote-test' }));
+      const wbListener = vi.fn();
+      const notesListener = vi.fn();
+      const kanbanListener = vi.fn();
+
+      client2.subscribeMap('whiteboard', wbListener);
+      client2.subscribeText('notes', notesListener);
+      client2.subscribeArray('kanban', kanbanListener);
+
+      // Simulate incoming remote update touching ONLY whiteboard
+      const updatePayload = new TextEncoder().encode(
+        JSON.stringify({
+          __yoin_mock_v2: true,
+          maps: { whiteboard: { shape1: { x: 50, y: 60 } } },
+        }),
+      );
+
+      // MSG_SYNC_STEP_2 packet: byte 0 is 1 (MSG_SYNC_STEP_2), remainder is update payload
+      const packet = new Uint8Array(1 + updatePayload.length);
+      packet[0] = 1;
+      packet.set(updatePayload, 1);
+
+      await (client2.network as any).onMessageReceived(packet);
+
+      expect(wbListener).toHaveBeenCalledTimes(1);
+      expect(wbListener).toHaveBeenCalledWith({ shape1: { x: 50, y: 60 } });
+      expect(notesListener).not.toHaveBeenCalled();
+      expect(kanbanListener).not.toHaveBeenCalled();
+
+      await client2.destroy();
+    });
+
     it('should not queue transient awareness packets when offline', () => {
       // While socket is still CONNECTING (offline)
       expect(client.network.isConnected).toBe(false);
@@ -472,6 +505,52 @@ describe('YoinClient', () => {
       client.use(plugin);
       await client.destroy();
       expect(plugin.onDestroy).toHaveBeenCalled();
+    });
+
+    it('should rollback plugin on onInstall failure (YOIN-006)', async () => {
+      const failingPlugin = {
+        name: 'failing-plugin',
+        onInstall: vi.fn(() => {
+          throw new Error('Initialization failed');
+        }),
+        onAfterUpdate: vi.fn(),
+        onDestroy: vi.fn(),
+      };
+
+      expect(() => client.use(failingPlugin)).toThrow('Initialization failed');
+      expect((client as any).plugins).not.toContain(failingPlugin);
+      expect(failingPlugin.onDestroy).toHaveBeenCalled();
+
+      // Mutation must not trigger any hooks on the rolled-back plugin
+      await client.insertText(0, 'test-rollback');
+      expect(failingPlugin.onAfterUpdate).not.toHaveBeenCalled();
+    });
+
+    it('should await async onDestroy and tolerate plugin teardown errors (YOIN-006)', async () => {
+      let asyncCleanupFinished = false;
+      const asyncPlugin = {
+        name: 'async-plugin',
+        onInstall: vi.fn(),
+        onDestroy: vi.fn(async () => {
+          await new Promise((r) => setTimeout(r, 20));
+          asyncCleanupFinished = true;
+        }),
+      };
+
+      const failingTeardownPlugin = {
+        name: 'failing-teardown-plugin',
+        onInstall: vi.fn(),
+        onDestroy: vi.fn(() => {
+          throw new Error('Teardown error');
+        }),
+      };
+
+      client.use(asyncPlugin).use(failingTeardownPlugin);
+      await client.destroy();
+
+      expect(asyncCleanupFinished).toBe(true);
+      expect(failingTeardownPlugin.onDestroy).toHaveBeenCalled();
+      expect((client as any).plugins.length).toBe(0);
     });
   });
 
@@ -571,6 +650,64 @@ describe('YoinClient', () => {
       client.subscribe(listener);
       client.broadcastUpdate(new Uint8Array([1, 2, 3]));
       expect(listener).toHaveBeenCalled();
+    });
+  });
+
+  describe('Server-authoritative Mode & Nested Maps (Phase 1)', () => {
+    it('supports setNested and updateNested for whiteboard-style shapes', async () => {
+      await client.setNested('shapes', 'box-1', {
+        x: 10,
+        y: 20,
+        type: 'rect',
+        fill: 'red',
+      });
+
+      const shapes = client.getMap('shapes');
+      expect(shapes['box-1']).toEqual({
+        x: 10,
+        y: 20,
+        type: 'rect',
+        fill: 'red',
+      });
+
+      await client.updateNested('shapes', 'box-1', { x: 30, fill: 'blue' });
+      const updated = client.getMap('shapes');
+      expect(updated['box-1']).toEqual({
+        x: 30,
+        y: 20,
+        type: 'rect',
+        fill: 'blue',
+      });
+    });
+
+    it('attaches 4-byte sequence header when mode is server', () => {
+      const serverClient = new YoinClient({
+        url: 'ws://localhost:1234',
+        docId: 'test-room',
+        mode: 'server',
+      });
+
+      const broadcastSpy = vi.spyOn(serverClient.network, 'broadcast');
+      serverClient.broadcastUpdate(new Uint8Array([10, 20]));
+
+      expect(broadcastSpy).toHaveBeenCalled();
+      const packet = broadcastSpy.mock.calls[0][0];
+      // [MSG_SYNC_STEP_2 (1), seq_be_0, seq_be_1, seq_be_2, seq_be_3, 10, 20]
+      expect(packet[0]).toBe(1); // MSG_SYNC_STEP_2
+      expect(packet.length).toBe(1 + 4 + 2);
+    });
+
+    it('Y-07: client supports createRelativePosition and resolveRelativePosition', () => {
+      const relPos = client.createRelativePosition(5, 0, 'content');
+      expect(relPos).toBeInstanceOf(Uint8Array);
+
+      const resolved = client.resolveRelativePosition(relPos);
+      expect(resolved).toEqual({ index: 5, assoc: 0 });
+
+      // Overload with textName first
+      const relPos2 = client.createRelativePosition('notes', 10, -1);
+      const resolved2 = client.resolveRelativePosition(relPos2);
+      expect(resolved2).toEqual({ index: 10, assoc: -1 });
     });
   });
 });

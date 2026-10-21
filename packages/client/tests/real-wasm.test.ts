@@ -135,4 +135,115 @@ describe('Real Rust/Yrs WASM Engine (core_bg.wasm)', () => {
     docA.free();
     docB.free();
   });
+
+  it('supports map_insert_nested and map_update_nested for property-level CRDT merges', () => {
+    const docA = new YoinDoc();
+    const docB = new YoinDoc();
+
+    // 1. DocA inserts a nested shape (Whiteboard rect)
+    const initDiff = docA.map_insert_nested('shapes', 'rect-1', {
+      type: 'rect',
+      x: 10,
+      y: 20,
+      fill: 'red',
+    });
+    docB.apply_update(initDiff);
+
+    // 2. Client A moves the rectangle (x: 150)
+    const moveDiff = docA.map_update_nested('shapes', 'rect-1', { x: 150 });
+
+    // 3. Client B concurrently changes color (fill: 'blue')
+    const colorDiff = docB.map_update_nested('shapes', 'rect-1', { fill: 'blue' });
+
+    // 4. Cross-replicate updates
+    docA.apply_update(colorDiff);
+    docB.apply_update(moveDiff);
+
+    // 5. Verify property-level merge: BOTH x: 150 AND fill: 'blue' are preserved!
+    const stateA = docA.map_get_all('shapes');
+    const stateB = docB.map_get_all('shapes');
+
+    expect(stateA).toEqual(stateB);
+    expect(stateA['rect-1']).toEqual({
+      type: 'rect',
+      x: 150,
+      y: 20,
+      fill: 'blue',
+    });
+
+    docA.free();
+    docB.free();
+  });
+
+  it('throws error when apply_update receives corrupted bytes', () => {
+    const doc = new YoinDoc();
+    const corrupted = new Uint8Array([255, 255, 255, 255]);
+    expect(() => doc.apply_update(corrupted)).toThrow();
+    doc.free();
+  });
+
+  it('Y-03: returns affected container scopes on remote apply_update', () => {
+    const docA = new YoinDoc();
+    const docB = new YoinDoc();
+
+    // Pre-register containers so Yrs recognizes their branch types
+    docB.get_text('notes');
+    docB.map_get_all('wb.shapes');
+    docB.array_get_all('kanban.tasks');
+
+    // 1. Text update
+    const textDiff = docA.insert_text('notes', 0, 'remote hello');
+    const textScopes = docB.apply_update(textDiff);
+    expect(textScopes).toEqual([{ kind: 'text', name: 'notes' }]);
+
+    // 2. Map update (nested shape)
+    const mapDiff = docA.map_insert_nested('wb.shapes', 'node_1', {
+      type: 'rect',
+      x: 10,
+    });
+    const mapScopes = docB.apply_update(mapDiff);
+    expect(mapScopes).toEqual([{ kind: 'map', name: 'wb.shapes' }]);
+
+    // 3. Array update
+    const arrayDiff = docA.array_push('kanban.tasks', 'task-101');
+    const arrayScopes = docB.apply_update(arrayDiff);
+    expect(arrayScopes).toEqual([{ kind: 'array', name: 'kanban.tasks' }]);
+
+    docA.free();
+    docB.free();
+  });
+
+  it('Y-07: relative position tracks index shifts correctly across remote updates', () => {
+    const docA = new YoinDoc();
+    const docB = new YoinDoc();
+
+    // 1. DocA writes "hello world" (11 chars)
+    const initDiff = docA.insert_text('content', 0, 'hello world');
+    docB.apply_update(initDiff);
+
+    // 2. DocB creates relative position at index 5 (after "hello", assoc: 0)
+    const relPos = docB.create_relative_position('content', 5, 0);
+    expect(relPos).toBeInstanceOf(Uint8Array);
+    expect(relPos.length).toBeGreaterThan(0);
+
+    const posBefore = docB.resolve_relative_position(relPos);
+    expect(posBefore).toEqual({ index: 5, assoc: 0 });
+
+    // 3. DocA prepends "[PREPENDED 15] " (15 chars)
+    const prependText = '[PREPENDED 15] ';
+    const prependDiff = docA.insert_text('content', 0, prependText);
+    docB.apply_update(prependDiff);
+
+    // 4. DocB resolves relative position -> index must have shifted by 15 to 20!
+    const posAfter = docB.resolve_relative_position(relPos);
+    expect(posAfter).toEqual({ index: 5 + prependText.length, assoc: 0 });
+
+    // 5. Verify the character at index 20 is still ' ' (space between "hello" and "world")
+    const fullText = docB.get_text('content');
+    expect(fullText.charAt(20)).toBe(' ');
+    expect(fullText.substring(21, 26)).toBe('world');
+
+    docA.free();
+    docB.free();
+  });
 });

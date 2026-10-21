@@ -1,33 +1,33 @@
-[繁體中文](API.md) | [English](API_en.md)
+[繁�?中�?](API.md) | [English](API_en.md)
 
-# Yoin API 參考手冊
+# Yoin API ?�考�???
 
-> 版本：`@yoin/client` v0.1.2
+> ?�本：`@yoin/client` v0.1.2
 
-## 目錄
+## ?��?
 
-- [初始化](#初始化)
+- [?��??�](#?��???
   - [`initYoin(wasmInput?)`](#inityoinwasminput)
   - [`isYoinInitialized()`](#isyoininitialized)
-- [YoinClient 核心類別](#yoinclient-核心類別)
-  - [建構子與設定](#建構子與設定)
-  - [Text API（富文本與多文字容器）](#text-api富文本與多文字容器)
-  - [Map API（完整 CRUD 與原生型別保真）](#map-api完整-crud-與原生型別保真)
+- [YoinClient ?��?類別](#yoinclient-?��?類別)
+  - [建�?子�?設�?](#建�?子�?設�?)
+  - [Text API（�??�本?��??��?容器）](#text-api富�??��?多�?字容??
+  - [Map API（�???CRUD ?��??��??��??��?](#map-api完整-crud-?��??��??��???
   - [Array API（Push / Insert / Delete / Move）](#array-apipush--insert--delete--move)
-  - [容器級精準訂閱與生命週期](#容器級精準訂閱與生命週期)
-  - [伺服器快照預載與同步控制](#伺服器快照預載與同步控制)
-  - [Hook API（插件系統使用）](#hook-api插件系統使用)
+  - [容器級精準�??��??�命?��?](#容器級精準�??��??�命?��?)
+  - [伺�??�快?��?載�??�步?�制](#伺�??�快?��?載�??�步?�制)
+  - [Hook API（�?件系統使?��?](#hook-api?�件系統使用)
   - [Awareness API](#awareness-api)
-  - [存取器與工具方法](#存取器與工具方法)
-- [Proxy 透明讀寫](#proxy-透明讀寫)
+  - [存�??��?工具?��?](#存�??��?工具?��?)
+- [Proxy ?��?讀寫](#proxy-?��?讀�?
   - [`createMapProxy<T>(client, mapName)`](#createmapProxyTclient-mapname)
   - [`createArrayProxy<T>(client, arrayName)`](#createarrayproxytclient-arrayname)
-- [插件系統](#插件系統)
+- [?�件系統](#?�件系統)
   - [`YoinPlugin` 介面](#yoinplugin-介面)
-  - [`createDbPlugin(options)` — IndexedDB 持久化](#createdbpluginoptions--indexeddb-持久化)
-  - [`createUndoPlugin()` — 復原/重做](#createundoplugin--復原重做)
-  - [`createLoggerPlugin(prefix?)` — 除錯日誌](#createloggerpluginprefix--除錯日誌)
-  - [自訂插件範例](#自訂插件範例)
+  - [`createDbPlugin(options)` ??IndexedDB ?��??�](#createdbpluginoptions--indexeddb-?��???
+  - [`createUndoPlugin()` ??復�?/?��?](#createundoplugin--復�??��?)
+  - [`createLoggerPlugin(prefix?)` ???�錯?��?](#createloggerpluginprefix--?�錯?��?)
+  - [?��??�件範�?](#?��??�件範�?)
 - [React Hooks (`@yoin/client/react`)](#react-hooks-yoinclientreact)
   - [`<YoinProvider>`](#yoinprovider)
   - [`useYoinClient()`](#useyoinclient)
@@ -37,18 +37,18 @@
   - [`useYoinAwareness()`](#useyoinawareness)
   - [`useYoinStatus()`](#useyoinstatus)
   - [`useYoinUndo()`](#useyoinundo)
-- [底層模組](#底層模組)
+- [底層模�?](#底層模�?)
   - [`NetworkManager`](#networkmanager)
   - [`StorageAdapter`](#storageadapter)
-- [Schema 驗證（Zod 整合）](#schema-驗證zod-整合)
-- [型別定義](#型別定義)
-- [通訊協議](#通訊協議)
+- [Schema 驗�?（Zod ?��?）](#schema-驗�?zod-?��?)
+- [?�別定義](#?�別定義)
+- [?��??�議](#?��??�議)
 
 ---
 
-## 初始化
+## ?��???
 
-在使用任何 Yoin 功能之前，必須先載入並初始化底層的 Rust WebAssembly 引擎。
+?�使?�任�?Yoin ?�能之�?，�??��?載入並�?始�?底層??Rust WebAssembly 引�???
 
 ### `initYoin(wasmInput?)`
 
@@ -56,20 +56,20 @@
 function initYoin(wasmInput?: unknown): Promise<void>
 ```
 
-載入並初始化 Yoin 的 WASM CRDT 引擎。全域只需呼叫一次，重複呼叫是冪等的（直接回傳已完成的 Promise），同時具備並行鎖防止重複載入。
+載入並�?始�? Yoin ??WASM CRDT 引�??�全?�只?�?�叫一次�??��??�叫?�冪等�?（直?��??�已完�???Promise）�??��??��?並�??�防止�?複�??��?
 
-**參數**：
-- `wasmInput` *(選填)*：自訂的 WASM 模組來源（`RequestInfo | URL | Response | BufferSource | WebAssembly.Module`）。省略時使用套件內建的 `core_bg.wasm`。
+**?�數**�?
+- `wasmInput` *(?�填)*：自訂�? WASM 模�?來�?（`RequestInfo | URL | Response | BufferSource | WebAssembly.Module`）。�??��?使用套件?�建??`core_bg.wasm`??
 
-**範例**：
+**範�?**�?
 
 ```typescript
 import { initYoin } from '@yoin/client';
 
-// 標準用法 — 自動載入內建 WASM
+// 標�??��? ???��?載入?�建 WASM
 await initYoin();
 
-// 自訂 WASM 路徑（例如從 CDN 載入）
+// ?��? WASM 路�?（�?如�? CDN 載入�?
 await initYoin('https://cdn.example.com/core_bg.wasm');
 ```
 
@@ -79,39 +79,39 @@ await initYoin('https://cdn.example.com/core_bg.wasm');
 function isYoinInitialized(): boolean
 ```
 
-檢查 WASM 引擎是否已完成初始化。
+檢查 WASM 引�??�否已�??��?始�???
 
 ---
 
-## YoinClient 核心類別
+## YoinClient ?��?類別
 
-`YoinClient` 是 Yoin 的微核心（Micro-Kernel），負責管理 CRDT 文件實例、WebSocket 網路通訊、Awareness 感知狀態，以及插件生命週期。
+`YoinClient` ??Yoin ?�微?��?（Micro-Kernel）�?負責管�? CRDT ?�件實�??�WebSocket 網路?��??�Awareness ?�知?�?��?以�??�件?�命?��???
 
-### 建構子與設定
+### 建�?子�?設�?
 
 ```typescript
 const client = new YoinClient(config: YoinConfig)
 ```
 
-> **注意**：建構 `YoinClient` 前必須先完成 `await initYoin()`，否則會拋出錯誤。
+> **注�?**：建�?`YoinClient` ?��??��?完�? `await initYoin()`，否?��??�出?�誤??
 
-**`YoinConfig` 介面**：
+**`YoinConfig` 介面**�?
 
-| 屬性 | 型別 | 必填 | 預設值 | 說明 |
+| 屬�?| ?�別 | 必填 | ?�設??| 說�? |
 |------|------|------|--------|------|
-| `url` | `string` | 是 | — | WebSocket 伺服器基礎網址（如 `'wss://yoin-worker.example.workers.dev'` 或 `'ws://localhost:8080'`） |
-| `docId` | `string` | 是 | — | 文件/房間的唯一識別碼。最終連線網址為 `${url}/${docId}` |
-| `dbName` | `string` | 否 | — | IndexedDB 資料庫名稱（搭配 `createDbPlugin` 使用） |
-| `awarenessThrottleMs` | `number` | 否 | `30` | Awareness 廣播節流間隔（毫秒），預設 ~33fps |
-| `heartbeatIntervalMs` | `number` | 否 | `5000` | Awareness 心跳廣播間隔（毫秒） |
-| `heartbeatTimeoutMs` | `number` | 否 | `30000` | 遠端客戶端無回應視為離線的逾時時間（毫秒） |
-| `schemas` | `Record<string, z.ZodTypeAny>` | 否 | — | Zod Schema 定義，用於寫入前自動驗證（詳見 [Schema 驗證](#schema-驗證zod-整合)） |
+| `url` | `string` | ??| ??| WebSocket 伺�??�基礎網?�（�? `'wss://yoin-worker.example.workers.dev'` ??`'ws://localhost:8080'`�?|
+| `docId` | `string` | ??| ??| ?�件/?��??�唯一識別碼。�?終�??網�???`${url}/${docId}` |
+| `dbName` | `string` | ??| ??| IndexedDB 資�?庫�?稱�??��? `createDbPlugin` 使用�?|
+| `awarenessThrottleMs` | `number` | ??| `30` | Awareness �?��節流�??��?毫�?）�??�設 ~33fps |
+| `heartbeatIntervalMs` | `number` | ??| `5000` | Awareness 心跳�?��?��?（毫秒�? |
+| `heartbeatTimeoutMs` | `number` | ??| `30000` | ?�端客戶端無?��?視為?��??�逾�??��?（毫秒�? |
+| `schemas` | `Record<string, z.ZodTypeAny>` | ??| ??| Zod Schema 定義，用?�寫?��??��?驗�?（詳�?[Schema 驗�?](#schema-驗�?zod-?��?)�?|
 
 ---
 
-### Text API（富文本與多文字容器）
+### Text API（�??�本?��??��?容器�?
 
-支援在單一文件內建立多個具名文字容器（預設容器名稱為 `'content'`），並支援與 Quill / Tiptap 相容的富文本格式屬性與 Delta 操作。
+?�援?�單一?�件?�建立�??�具?��?字容?��??�設容器?�稱??`'content'`）�?並支?��? Quill / Tiptap ?�容?��??�本?��?屬性�? Delta ?��???
 
 #### `insertText(index, text, attributes?, textName?)`
 
@@ -124,7 +124,7 @@ async insertText(
 ): Promise<void>
 ```
 
-在指定文字容器的 `index` 位置插入文字，可選擇附帶富文本格式屬性（如 `{ bold: true, color: '#ff0000' }`）。
+?��?定�?字容?��? `index` 位置?�入?��?，可?��??�帶富�??�格式屬?��?�?`{ bold: true, color: '#ff0000' }`）�?
 
 #### `deleteText(index, length, textName?)`
 
@@ -136,7 +136,7 @@ async deleteText(
 ): Promise<void>
 ```
 
-從指定文字容器的 `index` 位置開始刪除 `length` 個字元。
+從�?定�?字容?��? `index` 位置?��??�除 `length` ?��??��?
 
 #### `formatText(index, length, attributes, textName?)`
 
@@ -149,7 +149,7 @@ async formatText(
 ): Promise<void>
 ```
 
-對指定文字容器 `[index, index + length)` 區間內的文字套用富文本格式屬性（例如 `{ italic: true, bold: null }`）。
+對�?定�?字容??`[index, index + length)` ?�?�內?��?字�??��??�本?��?屬性�?例�? `{ italic: true, bold: null }`）�?
 
 #### `applyTextDelta(ops, textName?)`
 
@@ -160,7 +160,7 @@ async applyTextDelta(
 ): Promise<void>
 ```
 
-將 Quill 相容的 Delta 操作陣列（支援 `insert`、`retain`、`delete` 與 `attributes`）以單一 CRDT 事務套用至指定文字容器。
+�?Quill ?�容??Delta ?��????（支??`insert`?�`retain`?�`delete` ??`attributes`）以?��? CRDT 事�?套用?��?定�?字容?��?
 
 ```typescript
 await client.applyTextDelta(
@@ -178,7 +178,7 @@ await client.applyTextDelta(
 async clearText(textName: string = 'content'): Promise<void>
 ```
 
-清空指定文字容器的所有文字內容。
+清空?��??��?容器?��??��?字內容�?
 
 #### `getText(textName?)`
 
@@ -186,7 +186,7 @@ async clearText(textName: string = 'content'): Promise<void>
 getText(textName: string = 'content'): string
 ```
 
-取得指定文字容器目前的純文字字串。
+?��??��??��?容器?��??��??��?字串??
 
 #### `getTextDelta(textName?)`
 
@@ -194,13 +194,13 @@ getText(textName: string = 'content'): string
 getTextDelta(textName: string = 'content'): TextDeltaOp[]
 ```
 
-取得指定文字容器目前的富文本 Delta 陣列（格式為 `Array<{ insert: string, attributes?: Record<string, any> }>`）。
+?��??��??��?容器?��??��??�本 Delta ???（格式為 `Array<{ insert: string, attributes?: Record<string, any> }>`）�?
 
 ---
 
-### Map API（完整 CRUD 與原生型別保真）
+### Map API（�???CRUD ?��??��??��??��?
 
-操作具名的 CRDT Map（鍵值對結構）。底層透過 Rust `yrs::Any` 原生儲存所有基礎型別與巢狀結構，**不會發生 `"123"` 轉數字或 `"true"` 轉布林的型別失真**。
+?��??��???CRDT Map（鍵?��?結�?）。�?層透�? Rust `yrs::Any` ?��??��??�?�基礎�??��?巢�?結�?�?*不�??��? `"123"` 轉數字�? `"true"` 轉�??��??�別失�?**??
 
 #### `setMap(mapName, key, value)`
 
@@ -208,12 +208,12 @@ getTextDelta(textName: string = 'content'): TextDeltaOp[]
 async setMap(mapName: string, key: string, value: any): Promise<void>
 ```
 
-在名為 `mapName` 的 Map 中設定 `key` 的值。若設定了對應的 Zod Schema，會在寫入前自動驗證。
+?��???`mapName` ??Map 中設�?`key` ?�值。若設�?了�??��? Zod Schema，�??�寫?��??��?驗�???
 
 ```typescript
 await client.setMap('settings', 'theme', 'dark');
-await client.setMap('settings', 'code', '123');     // 保持為 string "123"
-await client.setMap('settings', 'fontSize', 16);    // 保持為 number 16
+await client.setMap('settings', 'code', '123');     // 保�???string "123"
+await client.setMap('settings', 'fontSize', 16);    // 保�???number 16
 await client.setMap('settings', 'profile', { name: 'Alice', role: 'admin' });
 ```
 
@@ -224,7 +224,7 @@ async deleteMap(mapName: string, key: string): Promise<void>
 async deleteMapKey(mapName: string, key: string): Promise<void>
 ```
 
-從名為 `mapName` 的 Map 中刪除指定的 `key`，並自動同步至所有連線端。`deleteMapKey` 為 `deleteMap` 的語意別名。
+從�???`mapName` ??Map 中刪?��?定�? `key`，並?��??�步?��??��??端。`deleteMapKey` ??`deleteMap` ?��??�別?��?
 
 ```typescript
 await client.deleteMap('settings', 'code');
@@ -236,7 +236,7 @@ await client.deleteMap('settings', 'code');
 hasMapKey(mapName: string, key: string): boolean
 ```
 
-檢查名為 `mapName` 的 Map 中是否存在指定的 `key`。
+檢查?�為 `mapName` ??Map 中是?��??��?定�? `key`??
 
 #### `getMap(mapName)`
 
@@ -244,7 +244,23 @@ hasMapKey(mapName: string, key: string): boolean
 getMap(mapName: string): Record<string, any>
 ```
 
-取得名為 `mapName` 的 Map 中所有鍵值對，回傳原生 JavaScript 物件。
+?��??�為 `mapName` ??Map 中�??�鍵?��?，�??��???JavaScript ?�件??
+
+#### `setNested(mapName, key, obj)` (Y-02)
+
+``typescript
+async setNested(mapName: string, key: string, obj: Record<string, any>): Promise<void>
+``
+
+�b�� Map �U�H**��@��l Transaction** �إߥ]�t�h���ݩʪ��_�� `YMap`�C�M�� YoinSpace �ժO�ϧΥ��y�A�䴩**�ݩʯŵL�Ĭ�X��**�]�Ҧp�� A ���ʮy�� `x`�A�� B �ק��C�� `fill`�A���ݦ��ī��̭ק�ҫO�d�^�C
+
+#### `updateNested(mapName, key, partial)` (Y-02)
+
+``typescript
+async updateNested(mapName: string, key: string, partial: Record<string, any>): Promise<void>
+``
+
+������s�_�� `YMap` �������w���A�u�קﴣ�Ѫ��ݩʡA���|�л\�ϧΤ����ק諸��l�ݩʡC
 
 #### `setMapDeep(mapName, path, value)`
 
@@ -252,12 +268,12 @@ getMap(mapName: string): Record<string, any>
 setMapDeep(mapName: string, path: string[], value: any): void
 ```
 
-在巢狀 Map 結構中，沿著 `path` 路徑深入設定任意 JS 型別的 `value`（支援數字、字串、布林、物件、陣列與 `null`）。路徑上不存在的中間層 `MapPrelim` 會自動建立。
+?�巢?� Map 結�?中�?沿�? `path` 路�?深入設�?任�? JS ?�別??`value`（支?�數字、�?串、�??�、物件、陣?��? `null`）。路徑�?不�??��?中�?�?`MapPrelim` ?�自?�建立�?
 
 ```typescript
-// 等同於設定 canvas.node_1.position.x = 150
+// 等�??�設�?canvas.node_1.position.x = 150
 client.setMapDeep('canvas', ['node_1', 'position', 'x'], 150);
-// 亦支援字串或物件
+// 亦支?��?串�??�件
 client.setMapDeep('canvas', ['node_1', 'label'], 'Hero Card');
 ```
 
@@ -267,7 +283,7 @@ client.setMapDeep('canvas', ['node_1', 'label'], 'Hero Card');
 batchSet(entries: Array<[string, string, any]>): void
 ```
 
-在**單一 CRDT 事務**中批次寫入多筆 Map 資料，只產生一次 diff 與一次網路廣播。若設定了 Zod Schema，會在寫入前對所有項目執行驗證。
+??*?��? CRDT 事�?**中批次寫?��?�?Map 資�?，只?��?一�?diff ?��?次網路廣?�。若設�?�?Zod Schema，�??�寫?��?對�??��??�執行�?證�?
 
 ```typescript
 client.batchSet([
@@ -280,9 +296,9 @@ client.batchSet([
 
 ---
 
-### Array API（Push / Insert / Delete / Move）
+### Array API（Push / Insert / Delete / Move�?
 
-操作具名的 CRDT Array（有序列表結構）。
+?��??��???CRDT Array（�?序�?表�?構�???
 
 #### `pushArray(arrayName, item)`
 
@@ -290,7 +306,7 @@ client.batchSet([
 async pushArray(arrayName: string, item: any): Promise<void>
 ```
 
-將 `item` 推入名為 `arrayName` 的 Array 尾端（支援任意原生 JS 型別與物件）。若設定了對應的 Zod Schema，會在寫入前自動驗證。
+�?`item` ?�入?�為 `arrayName` ??Array 尾端（支?�任?��???JS ?�別?�物件�??�若設�?了�??��? Zod Schema，�??�寫?��??��?驗�???
 
 #### `insertArray(arrayName, index, item)`
 
@@ -298,7 +314,7 @@ async pushArray(arrayName: string, item: any): Promise<void>
 async insertArray(arrayName: string, index: number, item: any): Promise<void>
 ```
 
-在名為 `arrayName` 的 Array 的指定 `index` 位置插入 `item`。若設定了對應的 Zod Schema，會在寫入前自動驗證。
+?��???`arrayName` ??Array ?��?�?`index` 位置?�入 `item`?�若設�?了�??��? Zod Schema，�??�寫?��??��?驗�???
 
 #### `deleteArray(arrayName, index, length?)`
 
@@ -306,7 +322,7 @@ async insertArray(arrayName: string, index: number, item: any): Promise<void>
 async deleteArray(arrayName: string, index: number, length: number = 1): Promise<void>
 ```
 
-從名為 `arrayName` 的 Array 的 `index` 位置開始刪除 `length` 個元素（預設刪除 1 個）。
+從�???`arrayName` ??Array ??`index` 位置?��??�除 `length` ?��?素�??�設?�除 1 ?��???
 
 #### `moveArray(arrayName, fromIndex, toIndex)`
 
@@ -314,7 +330,7 @@ async deleteArray(arrayName: string, index: number, length: number = 1): Promise
 async moveArray(arrayName: string, fromIndex: number, toIndex: number): Promise<void>
 ```
 
-將名為 `arrayName` 的 Array 中位於 `fromIndex` 的元素移動至 `toIndex`（適用於圖層 z-index 排序、看板卡片拖曳排序）。
+將�???`arrayName` ??Array 中�???`fromIndex` ?��?素移?�至 `toIndex`（適?�於?�層 z-index ?��??��??�卡?��??��?序�???
 
 #### `getArray(arrayName)`
 
@@ -322,11 +338,11 @@ async moveArray(arrayName: string, fromIndex: number, toIndex: number): Promise<
 getArray(arrayName: string): any[]
 ```
 
-取得名為 `arrayName` 的 Array 中所有元素。
+?��??�為 `arrayName` ??Array 中�??��?素�?
 
 ---
 
-### 容器級精準訂閱與生命週期
+### 容器級精準�??��??�命?��?
 
 #### `subscribeMap(mapName, listener)`
 
@@ -334,7 +350,7 @@ getArray(arrayName: string): any[]
 subscribeMap(mapName: string, listener: () => void): () => void
 ```
 
-僅訂閱指定 `mapName` 容器的變更。本地修改其他容器（例如打字或修改其他 Map）時**不會**觸發此回呼；收到遠端增量更新或快照時會自動觸發。訂閱時會立即觸發一次初始呼叫，並回傳取消訂閱函式。
+?��??��?�?`mapName` 容器?��??�。本?�修?�其他容?��?例�??��??�修?�其�?Map）�?**不�?**觸發此�??��??�到?�端增�??�新?�快?��??�自?�觸?�。�??��??��??�觸?��?次�?始呼?��?並�??��?消�??�函式�?
 
 #### `subscribeArray(arrayName, listener)`
 
@@ -342,7 +358,7 @@ subscribeMap(mapName: string, listener: () => void): () => void
 subscribeArray(arrayName: string, listener: () => void): () => void
 ```
 
-僅訂閱指定 `arrayName` 容器的變更。訂閱時會立即觸發一次初始呼叫，並回傳取消訂閱函式。
+?��??��?�?`arrayName` 容器?��??�。�??��??��??�觸?��?次�?始呼?��?並�??��?消�??�函式�?
 
 #### `subscribeText(textName, listener)`
 
@@ -350,7 +366,7 @@ subscribeArray(arrayName: string, listener: () => void): () => void
 subscribeText(textName: string, listener: (text: string) => void): () => void
 ```
 
-僅訂閱指定 `textName` 文字容器的變更，回呼參數為該容器目前的純文字字串。訂閱時會立即觸發一次初始呼叫，並回傳取消訂閱函式。
+?��??��?�?`textName` ?��?容器?��??��??�呼?�數?�該容器?��??��??��?字串?��??��??��??�觸?��?次�?始呼?��?並�??��?消�??�函式�?
 
 #### `subscribe(listener)`
 
@@ -358,7 +374,7 @@ subscribeText(textName: string, listener: (text: string) => void): () => void
 subscribe(listener: (text: string) => void): () => void
 ```
 
-全域訂閱文件變更（任何本地或遠端變更皆會觸發）。訂閱時會立即以目前 `getText()` 的值觸發一次。
+?��?訂閱?�件變更（任何本?��??�端變更?��?觸發）。�??��??��??�以?��? `getText()` ?�值觸?��?次�?
 
 #### `subscribeNetwork(cb)`
 
@@ -366,7 +382,7 @@ subscribe(listener: (text: string) => void): () => void
 subscribeNetwork(cb: (status: NetworkStatus) => void): () => void
 ```
 
-訂閱網路連線狀態變更（`'connecting' | 'online' | 'offline' | 'failed'`）。支援註冊多個監聽器，訂閱時立即以目前狀態觸發一次，並回傳取消訂閱函式。
+訂閱網路????�?��??��?`'connecting' | 'online' | 'offline' | 'failed'`）。支?�註?��??�監?�器，�??��?立即以目?��??�觸?��?次�?並�??��?消�??�函式�?
 
 #### `use(plugin)`
 
@@ -374,7 +390,7 @@ subscribeNetwork(cb: (status: NetworkStatus) => void): () => void
 use(plugin: YoinPlugin): this
 ```
 
-掛載一個插件到客戶端。支援鏈式呼叫，且同一個插件實例不會被重複安裝。
+?��?一?��?件到客戶端。支?��?式呼?��?且�?一?��?件實例�??�被?��?安�???
 
 #### `destroy()`
 
@@ -382,16 +398,16 @@ use(plugin: YoinPlugin): this
 destroy(): void
 ```
 
-銷毀客戶端實例，釋放所有資源：
-1. 清除心跳與垃圾回收計時器
-2. 呼叫所有已安裝插件的 `onDestroy()`（包含關閉 IndexedDB 連線）
-3. 發送離線 Awareness 廣播並關閉 WebSocket 連線
-4. 清除所有訂閱者與佇列
-5. 呼叫 `this.doc.free?.()` 釋放底層 Rust WASM 線性記憶體
+?��?客戶端實例�??�放?�?��?源�?
+1. 清除心跳?��??��??��??�器
+2. ?�叫?�?�已安�??�件??`onDestroy()`（�??��???IndexedDB ???�?
+3. ?�送離�?Awareness �?��並�???WebSocket ???
+4. 清除?�?��??�者�?佇�?
+5. ?�叫 `this.doc.free?.()` ?�放底層 Rust WASM 線性�??��?
 
 ---
 
-### 伺服器快照預載與同步控制
+### 伺�??�快?��?載�??�步?�制
 
 #### `exportSnapshot()`
 
@@ -399,7 +415,7 @@ destroy(): void
 exportSnapshot(): Uint8Array
 ```
 
-將目前整個 CRDT 文件狀態匯出為完整的二進位快照（等同於對空 State Vector 計算完整 diff），可直接儲存至後端資料庫（如 PostgreSQL `bytea` 或 S3）。
+將目?�整??CRDT ?�件?�?�匯?�為完整?��??��?快照（�??�於對空 State Vector 計�?完整 diff）�??�直?�儲存至後端資�?庫�?�?PostgreSQL `bytea` ??S3）�?
 
 #### `applySnapshot(snapshot)`
 
@@ -407,7 +423,7 @@ exportSnapshot(): Uint8Array
 applySnapshot(snapshot: Uint8Array): void
 ```
 
-將外部（例如伺服器 REST API 預載或本地備份）的二進位快照套用至當前 CRDT 文件，並通知所有容器與全域訂閱者。
+將�??��?例�?伺�???REST API ?��??�本?��?份�??��??��?快照套用?�當??CRDT ?�件，並?�知?�?�容?��??��?訂閱?��?
 
 #### `syncWithPeers()`
 
@@ -415,11 +431,11 @@ applySnapshot(snapshot: Uint8Array): void
 syncWithPeers(): void
 ```
 
-主動向房間內所有已連線同儕發送 `MSG_SYNC_STEP_1`（State Vector）請求差異同步（例如在 IndexedDB 非同步載入完成後自動呼叫）。
+主�??�房?�內?�?�已????��??��?`MSG_SYNC_STEP_1`（State Vector）�?求差?��?步�?例�???IndexedDB ?��?步�??��??��??��??�叫）�?
 
 ---
 
-### Hook API（插件系統使用）
+### Hook API（�?件系統使?��?
 
 #### `onDocUpdate(cb)`
 
@@ -427,7 +443,7 @@ syncWithPeers(): void
 onDocUpdate(cb: (update: Uint8Array) => void): () => void
 ```
 
-註冊一個在**任何更新**（本地操作或遠端同步）發生後都會被呼叫的回呼。回傳取消註冊函式。
+註�?一?�在**任�??�新**（本?��?作�??�端?�步）發?��??��?被呼?��??�呼?��??��?消註?�函式�?
 
 #### `onLocalUpdate(cb)`
 
@@ -435,13 +451,13 @@ onDocUpdate(cb: (update: Uint8Array) => void): () => void
 onLocalUpdate(cb: (update: Uint8Array) => void): () => void
 ```
 
-註冊一個**僅在本地操作**產生 diff 時被呼叫的回呼。回傳取消註冊函式。
+註�?一??*?�在?�地?��?**?��? diff ?�被?�叫?��??�。�??��?消註?�函式�?
 
 ---
 
 ### Awareness API
 
-Awareness 用於傳遞**暫態（Ephemeral）的使用者存在資訊**（游標位置、選取範圍、名稱、顏色等），不經過 CRDT 歷史記錄，且在離線時標記為 `{ transient: true }` 不會塞入離線重送佇列。
+Awareness ?�於?��?**?��?（Ephemeral）�?使用?��??��?�?*（游標�?置、選?��??�、�?稱、�??��?）�?不�???CRDT 歷史記�?，�??�離線�?標�???`{ transient: true }` 不�?塞入?��??�送�??��?
 
 #### `setAwareness(state)`
 
@@ -449,7 +465,7 @@ Awareness 用於傳遞**暫態（Ephemeral）的使用者存在資訊**（游標
 setAwareness(state: AwarenessPartial): void
 ```
 
-更新本地端的 Awareness 狀態並廣播給其他連線端（內建節流機制，預設 30ms）。
+?�新?�地端�? Awareness ?�?�並�?��給其他�??端�??�建節流�??��??�設 30ms）�?
 
 #### `onAwarenessChange(cb)`
 
@@ -457,7 +473,7 @@ setAwareness(state: AwarenessPartial): void
 onAwarenessChange(cb: AwarenessCallback): () => void
 ```
 
-訂閱所有連線端的 Awareness 狀態變更。回傳取消訂閱函式。
+訂閱?�?��??端�? Awareness ?�?��??�。�??��?消�??�函式�?
 
 #### `getAwarenessStates()`
 
@@ -465,7 +481,7 @@ onAwarenessChange(cb: AwarenessCallback): () => void
 getAwarenessStates(): Map<string, AwarenessState>
 ```
 
-取得目前所有連線端（包含自己）的 Awareness 狀態 Map，key 為 `clientId`。
+?��??��??�?��??端�??�含?�己）�? Awareness ?�??Map，key ??`clientId`??
 
 #### `leaveAwareness()`
 
@@ -473,7 +489,7 @@ getAwarenessStates(): Map<string, AwarenessState>
 leaveAwareness(): void
 ```
 
-主動通知其他連線端本客戶端已離開。
+主�??�知?��????端本客戶端已?��???
 
 #### `bindCursorTracking(container, renderer)`
 
@@ -481,23 +497,23 @@ leaveAwareness(): void
 bindCursorTracking(container: HTMLElement, renderer: CursorRenderer): () => void
 ```
 
-自動在指定的 HTML 容器上綁定滑鼠移動事件，並自動渲染所有遠端使用者的游標 DOM 元素。回傳清理函式。
+?��??��?定�? HTML 容器上�?定�?鼠移?��?件�?並自?�渲?��??��?端使?�者�?游�? DOM ?��??��??��??�函式�?
 
 ---
 
-### 存取器與工具方法
+### 存�??��?工具?��?
 
-| 方法 | 回傳型別 | 說明 |
+| ?��? | ?�傳?�別 | 說�? |
 |------|----------|------|
-| `getDoc()` | `YoinDoc` | 取得底層的 WASM `YoinDoc` 實例（供進階操作或插件使用） |
-| `getConfig()` | `YoinConfig` | 取得建構時傳入的設定物件 |
-| `getClientId()` | `string` | 取得本客戶端的隨機 8 碼識別碼 |
+| `getDoc()` | `YoinDoc` | ?��?底層??WASM `YoinDoc` 實�?（�??��??��??��?件使?��? |
+| `getConfig()` | `YoinConfig` | ?��?建�??�傳?��?設�??�件 |
+| `getClientId()` | `string` | ?��??�客?�端?�隨�?8 碼�??�碼 |
 
 ---
 
-## Proxy 透明讀寫
+## Proxy ?��?讀�?
 
-Proxy 模組讓你用原生 JavaScript 的屬性賦值與陣列方法直接操作 CRDT，無需手動呼叫 `setMap` / `deleteMap` / `pushArray`。
+Proxy 模�?讓�??��???JavaScript ?�屬?�賦?��?????��??�接?��? CRDT，無?�?��??�叫 `setMap` / `deleteMap` / `pushArray`??
 
 ### `createMapProxy<T>(client, mapName)`
 
@@ -508,11 +524,11 @@ function createMapProxy<T extends Record<string, any>>(
 ): T
 ```
 
-建立一個綁定到指定 CRDT Map 的透明 Proxy 物件：
-- **讀取 (`proxy.key`)**：即時從 `client.getMap(mapName)` 取值；若鍵不存在回傳 `undefined`。若值為巢狀物件，回傳支援深層讀寫的 Proxy。
-- **寫入 (`proxy.key = val` / `proxy.a.b = val`)**：頂層自動呼叫 `client.setMap`，深層自動呼叫 `client.setMapDeep`。
-- **刪除 (`delete proxy.key`)**：自動呼叫 `client.deleteMap(mapName, key)`。
-- **鍵檢查與列舉 (`'key' in proxy` / `Object.keys(proxy)`)**：直接反映 CRDT Map 目前的所有鍵。
+建�?一?��?定到?��? CRDT Map ?�透�? Proxy ?�件�?
+- **讀??(`proxy.key`)**：即?��? `client.getMap(mapName)` ?�值�??�鍵不�??��???`undefined`?�若?�為巢�??�件，�??�支?�深層�?寫�? Proxy??
+- **寫入 (`proxy.key = val` / `proxy.a.b = val`)**：�?層自?�呼??`client.setMap`，深層自?�呼??`client.setMapDeep`??
+- **?�除 (`delete proxy.key`)**：自?�呼??`client.deleteMap(mapName, key)`??
+- **?�檢?��??��? (`'key' in proxy` / `Object.keys(proxy)`)**：直?��???CRDT Map ?��??��??�鍵??
 
 ```typescript
 import { createMapProxy } from '@yoin/client';
@@ -525,11 +541,11 @@ interface BoardState {
 
 const board = createMapProxy<BoardState>(client, 'board');
 
-board.title = '專案白板';
+board.title = '專�??�板';
 board.zoom = 1.5;
 board.viewport = { x: 0, y: 0 };
-board.viewport.x = 120;         // 深層寫入 → 自動呼叫 setMapDeep
-delete (board as any).zoom;     // 刪除鍵 → 自動呼叫 deleteMap
+board.viewport.x = 120;         // 深層寫入 ???��??�叫 setMapDeep
+delete (board as any).zoom;     // ?�除?????��??�叫 deleteMap
 ```
 
 ### `createArrayProxy<T>(client, arrayName)`
@@ -541,27 +557,27 @@ function createArrayProxy<T>(
 ): T[]
 ```
 
-建立一個綁定到指定 CRDT Array 的透明 Proxy 陣列，每次讀取（如 `arr[0]`、`arr.length`、`arr.map(...)`）皆即時從 `client.getArray(arrayName)` 取得最新狀態，並支援以下變異方法：
-- **`.push(...items)`** → 呼叫 `client.pushArray`
-- **`.splice(start, deleteCount?, ...items)`** → 組合呼叫 `client.deleteArray` 與 `client.insertArray`
-- **`.pop()`** → 刪除並回傳最後一個元素
-- **`.shift()`** → 刪除並回傳第一個元素
-- **`.unshift(...items)`** → 在開頭依序插入元素
+建�?一?��?定到?��? CRDT Array ?�透�? Proxy ???，�?次�??��?�?`arr[0]`?�`arr.length`?�`arr.map(...)`）�??��?�?`client.getArray(arrayName)` ?��??�?��??��?並支?�以下�??�方法�?
+- **`.push(...items)`** ???�叫 `client.pushArray`
+- **`.splice(start, deleteCount?, ...items)`** ??組�??�叫 `client.deleteArray` ??`client.insertArray`
+- **`.pop()`** ???�除並�??��?後�??��?�?
+- **`.shift()`** ???�除並�??�第一?��?�?
+- **`.unshift(...items)`** ???��??��?序�??��?�?
 
 ```typescript
 import { createArrayProxy } from '@yoin/client';
 
 const todos = createArrayProxy<{ text: string; done: boolean }>(client, 'todos');
 
-todos.push({ text: '完成 API 文件', done: false });
-todos.splice(0, 1, { text: '完成 v0.1.2 升級', done: true });
+todos.push({ text: '完�? API ?�件', done: false });
+todos.splice(0, 1, { text: '完�? v0.1.2 ?��?', done: true });
 ```
 
 ---
 
-## 插件系統
+## ?�件系統
 
-Yoin 採用微核心架構，將非核心功能（持久化、復原/重做、日誌等）解耦為獨立插件。
+Yoin ?�用微核心架構�?將�??��??�能（�?久�??�復???��??�日誌�?）解?�為?��??�件??
 
 ### `YoinPlugin` 介面
 
@@ -575,7 +591,7 @@ interface YoinPlugin {
 }
 ```
 
-### `createDbPlugin(options)` — IndexedDB 持久化
+### `createDbPlugin(options)` ??IndexedDB ?��???
 
 ```typescript
 function createDbPlugin(options: YoinDbPluginOptions): {
@@ -584,12 +600,12 @@ function createDbPlugin(options: YoinDbPluginOptions): {
 }
 ```
 
-自動將 CRDT 文件快照持久化到瀏覽器的 IndexedDB（內建 `IDBDatabase` 連線快取）：
-1. **安裝時**：自動從 IndexedDB 載入歷史快照並合併到當前文件；若此時網路已連線，會自動呼叫 `client.syncWithPeers()` 與遠端同儕交換差異。
-2. **更新時**：每次文件變更（本地或遠端）後，以防抖（Debounce，預設 `1000ms`）方式自動排程存檔。
-3. **銷毀時**：自動取消計時器並關閉 IndexedDB 連線。
+?��?�?CRDT ?�件快照?��??�到?�覽?��? IndexedDB（內�?`IDBDatabase` ???快�?）�?
+1. **安�???*：自?��? IndexedDB 載入歷史快照並�?併到?��??�件；若此�?網路已�??，�??��??�叫 `client.syncWithPeers()` ?��?端�??�交?�差?��?
+2. **?�新??*：�?次�?件�??��??�地?��?端�?後�?以防?��?Debounce，�?�?`1000ms`）方式自?��?程�?檔�?
+3. **?��???*：自?��?消�??�器並�???IndexedDB ?????
 
-### `createUndoPlugin()` — 復原/重做
+### `createUndoPlugin()` ??復�?/?��?
 
 ```typescript
 function createUndoPlugin(): {
@@ -599,18 +615,18 @@ function createUndoPlugin(): {
 }
 ```
 
-基於 Yrs 內建的 `UndoManager`，提供本地操作的復原（Undo）與重做（Redo）功能：
-- 安裝時自動啟用預設 `'content'` Text 的追蹤。
-- 當使用者透過 `setMap`、`deleteMap`、`setMapDeep`、`batchSet`、`pushArray`、`insertArray`、`deleteArray`、`moveArray` 或自訂 `textName` 的文字方法操作容器時，**自動將該容器加入 Undo 追蹤範圍**（透過底層 `expand_undo_scope_for`）。
-- 只會復原**本地端**的操作，不會復原其他協作者的變更。
+?�於 Yrs ?�建??`UndoManager`，�?供本?��?作�?復�?（Undo）�??��?（Redo）�??��?
+- 安�??�自?��??��?�?`'content'` Text ?�追蹤�?
+- ?�使?�者透�? `setMap`?�`deleteMap`?�`setMapDeep`?�`batchSet`?�`pushArray`?�`insertArray`?�`deleteArray`?�`moveArray` ?�自�?`textName` ?��?字方法�?作容?��?�?*?��?將該容器?�入 Undo 追蹤範�?**（透�?底層 `expand_undo_scope_for`）�?
+- ?��?復�?**?�地�?*?��?作�?不�?復�??��??��??��?變更??
 
-### `createLoggerPlugin(prefix?)` — 除錯日誌
+### `createLoggerPlugin(prefix?)` ???�錯?��?
 
 ```typescript
 function createLoggerPlugin(prefix?: string): YoinPlugin
 ```
 
-### 自訂插件範例
+### ?��??�件範�?
 
 ```typescript
 import type { YoinPlugin } from '@yoin/client';
@@ -630,7 +646,7 @@ const analyticsPlugin: YoinPlugin = {
 
 ## React Hooks (`@yoin/client/react`)
 
-從 `@yoin/client/react` 匯入。所有狀態型 Hooks 皆基於 React 18 的 `useSyncExternalStore` 實作，並採用容器級訂閱以確保最佳渲染效能。
+�?`@yoin/client/react` ?�入?��??��??��? Hooks ?�基??React 18 ??`useSyncExternalStore` 實�?，並?�用容器級�??�以確�??�佳渲?��??��?
 
 ### `<YoinProvider>`
 
@@ -654,7 +670,7 @@ function useYoinClient(): YoinClient
 function useYoinMap<T extends Record<string, any>>(mapName: string): T
 ```
 
-回傳一個綁定到指定 CRDT Map 的**響應式 Proxy 物件**。底層使用 `client.subscribeMap(mapName, ...)`，僅在該 Map 變更時觸發元件重新渲染，並自動更新 Proxy 參考以確保 React 子元件能正確偵測 props 變更。
+?�傳一?��?定到?��? CRDT Map ??*?��?�?Proxy ?�件**?��?層使??`client.subscribeMap(mapName, ...)`，�??�該 Map 變更?�觸?��?件�??�渲?��?並自?�更??Proxy ?�考以確�? React 子�?件能�?��?�測 props 變更??
 
 ### `useYoinArray<T>(arrayName)`
 
@@ -662,7 +678,7 @@ function useYoinMap<T extends Record<string, any>>(mapName: string): T
 function useYoinArray<T = any>(arrayName: string): T[]
 ```
 
-回傳一個綁定到指定 CRDT Array 的**響應式 Proxy 陣列**。底層使用 `client.subscribeArray(arrayName, ...)`，支援 `.push()`、`.splice()`、`.pop()`、`.shift()`、`.unshift()` 與索引讀取。
+?�傳一?��?定到?��? CRDT Array ??*?��?�?Proxy ???**?��?層使??`client.subscribeArray(arrayName, ...)`，支??`.push()`?�`.splice()`?�`.pop()`?�`.shift()`?�`.unshift()` ?�索引�??��?
 
 ### `useYoinText(textName?)`
 
@@ -678,7 +694,7 @@ function useYoinText(textName: string = 'content'): {
 }
 ```
 
-訂閱並操作指定的具名 CRDT 文字容器（預設為 `'content'`），提供純文字 `text`、富文本 `delta` 以及完整的編輯方法。
+訂閱並�?作�?定�??��? CRDT ?��?容器（�?設為 `'content'`）�??��?純�?�?`text`?��??�本 `delta` 以�?完整?�編輯方法�?
 
 ### `useYoinAwareness()`
 
@@ -695,7 +711,7 @@ function useYoinAwareness(): {
 function useYoinStatus(): NetworkStatus
 ```
 
-取得目前的 WebSocket 網路連線狀態（`'connecting' | 'online' | 'offline' | 'failed'`）。底層使用 `client.subscribeNetwork`，可安全在多個元件中同時使用。
+?��??��???WebSocket 網路????�?��?`'connecting' | 'online' | 'offline' | 'failed'`）。�?層使??`client.subscribeNetwork`，可安全?��??��?件中?��?使用??
 
 ### `useYoinUndo()`
 
@@ -708,7 +724,7 @@ function useYoinUndo(): {
 
 ---
 
-## 底層模組
+## 底層模�?
 
 ### `NetworkManager`
 
@@ -724,8 +740,8 @@ class NetworkManager {
 }
 ```
 
-- **指數退避重連**：斷線後自動重連，延遲從 `1000ms` 開始倍增，上限 `30000ms`，最多重試 `50` 次；超過上限時發出 `'failed'` 狀態。
-- **暫態訊息過濾 (`BroadcastOptions.transient`)**：當 `options.transient === true` 時（如 Awareness、心跳、三向交握封包），離線期間會直接丟棄而不進入 `messageQueue`，確保重連時只重送真正的 CRDT 資料變更。
+- **?�數?�?��???*：斷線�??��??��??延遲�?`1000ms` ?��??��?，�???`30000ms`，�?多�?�?`50` 次�?超�?上�??�發??`'failed'` ?�?��?
+- **?��?訊息?�濾 (`BroadcastOptions.transient`)**：當 `options.transient === true` ?��?�?Awareness?��?跳、�??�交?��??��?，離線�??��??�接丟�??��??�入 `messageQueue`，確保�?????��??��?�?? CRDT 資�?變更??
 
 ### `StorageAdapter`
 
@@ -738,17 +754,17 @@ class StorageAdapter {
 }
 ```
 
-封裝瀏覽器 IndexedDB（Object Store 名稱為 `'snapshots'`），內建 `IDBDatabase` 連線實例快取，避免高頻存檔時重複開啟資料庫連線。
+封�??�覽??IndexedDB（Object Store ?�稱??`'snapshots'`）�??�建 `IDBDatabase` ???實�?快�?，避?��??��?檔�??��??��?資�?庫�????
 
 ---
 
-## Schema 驗證（Zod 整合）
+## Schema 驗�?（Zod ?��?�?
 
-Yoin 支援透過 [Zod](https://zod.dev/) 在寫入 CRDT 前驗證資料結構。只要在 `YoinConfig.schemas` 中定義對應 Map 或 Array 名稱的 Schema，`setMap`、`batchSet`、`pushArray`、`insertArray` 都會在寫入前自動執行驗證。
+Yoin ?�援?��? [Zod](https://zod.dev/) ?�寫??CRDT ?��?證�??��?構。只要在 `YoinConfig.schemas` 中�?義�???Map ??Array ?�稱??Schema，`setMap`?�`batchSet`?�`pushArray`?�`insertArray` ?��??�寫?��??��??��?驗�???
 
 ---
 
-## 型別定義
+## ?�別定義
 
 ### `TextDeltaOp`
 
@@ -772,23 +788,23 @@ interface BroadcastOptions {
 ### `NetworkStatus`
 
 ```typescript
-type NetworkStatus = 'connecting' | 'online' | 'offline' | 'failed';
+type NetworkStatus = 'connecting' | 'online' | 'offline' | 'synced' | 'failed';
 ```
 
 ### `YoinConfig` / `AwarenessState` / `AwarenessPartial` / `YoinPlugin`
 
-（完整定義請見上方各章節）
+（�??��?義�?見�??��?章�?�?
 
 ---
 
-## 通訊協議
+## ?��??�議
 
-Yoin 使用 1-byte Header 的二進位協議進行 WebSocket 通訊：
+Yoin 使用 1-byte Header ?��??��??�議?��? WebSocket ?��?�?
 
-| 類型 | 常數名稱 | 值 | 方向 | 說明 |
+| 類�? | 常數?�稱 | ??| ?��? | 說�? |
 |------|----------|----|------|------|
-| Sync Step 1 | `MSG_SYNC_STEP_1` | `0` | Client → Server → Client | 發送 State Vector 請求同步 |
-| Sync Step 2 | `MSG_SYNC_STEP_2` | `1` | 雙向 | 傳送非空的 CRDT Update / Diff |
-| Sync Step 1 Reply | `MSG_SYNC_STEP_1_REPLY` | `2` | Client → Server → Client | 回應自己的 State Vector |
-| Awareness | `MSG_AWARENESS` | `3` | 雙向 | 感知狀態廣播（JSON over binary，標記為 `transient`） |
-| Join Room | `MSG_JOIN_ROOM` | `4` | Client → Server | 加入房間通知（標記為 `transient`） |
+| Sync Step 1 | `MSG_SYNC_STEP_1` | `0` | Client ??Server ??Client | ?��?State Vector 請�??�步 |
+| Sync Step 2 | `MSG_SYNC_STEP_2` | `1` | ?��? | ?�送�?空�? CRDT Update / Diff |
+| Sync Step 1 Reply | `MSG_SYNC_STEP_1_REPLY` | `2` | Client ??Server ??Client | ?��??�己??State Vector |
+| Awareness | `MSG_AWARENESS` | `3` | ?��? | ?�知?�?�廣?��?JSON over binary，�?記為 `transient`�?|
+| Join Room | `MSG_JOIN_ROOM` | `4` | Client ??Server | ?�入?��??�知（�?記為 `transient`�?|

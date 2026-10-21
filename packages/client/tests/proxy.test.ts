@@ -170,17 +170,35 @@ describe('createArrayProxy', () => {
     expect([...proxy]).toEqual(['card-0', 'card-2-updated']);
   });
 
-  it('should warn on index assignment', () => {
-    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('should throw TypeError on direct index assignment (YOIN-005)', () => {
     const proxy = createArrayProxy<string>(client, 'logs');
-    proxy[0] = 'value';
-    expect(spy).toHaveBeenCalledWith(
-      expect.stringContaining('Index assignment'),
-    );
-    spy.mockRestore();
+    expect(() => {
+      proxy[0] = 'value';
+    }).toThrow(TypeError);
+    expect(() => {
+      proxy[0] = 'value';
+    }).toThrow(/Direct index assignment/);
   });
 
-  it('length should reflect snapshot', () => {
+  it('should throw TypeError on unsupported in-place array mutation methods (YOIN-005)', () => {
+    const proxy = createArrayProxy<string>(client, 'logs');
+    proxy.push('b', 'a');
+    expect(() => proxy.sort()).toThrow(TypeError);
+    expect(() => proxy.reverse()).toThrow(TypeError);
+    expect(() => (proxy as any).fill('x')).toThrow(TypeError);
+  });
+
+  it('should throw TypeError when assigning non-serializable values (YOIN-005)', () => {
+    const mapProxy = createMapProxy<any>(client, 'settings');
+    expect(() => {
+      mapProxy.callback = () => {};
+    }).toThrow(TypeError);
+    expect(() => {
+      mapProxy.sym = Symbol('test');
+    }).toThrow(TypeError);
+  });
+
+  it('length should reflect live state', () => {
     const proxy = createArrayProxy(client, 'empty-array');
     expect(proxy.length).toBe(0);
   });

@@ -19,6 +19,10 @@ export interface NetworkProviderOptions {
   baseDelayMs?: number;
   /** Maximum delay cap in ms (default: 30000) */
   maxDelayMs?: number;
+  /** Do not automatically connect on construction */
+  autoConnect?: boolean;
+  /** Async provider to supply dynamically refreshed URL and/or subprotocols on each connect/reconnect */
+  getConnectParams?: () => Promise<{ url: string; protocols?: string[] }>;
 }
 
 export interface BroadcastOptions {
@@ -43,6 +47,7 @@ export class NetworkProvider {
   private readonly maxReconnects: number;
   private readonly baseDelayMs: number;
   private readonly maxDelayMs: number;
+  private readonly getConnectParams?: () => Promise<{ url: string; protocols?: string[] }>;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
 
@@ -60,7 +65,11 @@ export class NetworkProvider {
     this.maxReconnects = options?.maxReconnects ?? DEFAULT_MAX_RECONNECTS;
     this.baseDelayMs = options?.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     this.maxDelayMs = options?.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
-    this.connect();
+    this.getConnectParams = options?.getConnectParams;
+
+    if (options?.autoConnect !== false) {
+      this.connect();
+    }
   }
 
   public get isConnected(): boolean {
@@ -75,11 +84,29 @@ export class NetworkProvider {
     this.messageQueue = [];
   }
 
-  private connect(): void {
+  public async connect(): Promise<void> {
     if (this.destroyed) return;
 
     this.onStatusChange('connecting');
-    this.socket = new WebSocket(this.url);
+
+    let connectUrl = this.url;
+    let protocols: string[] | undefined;
+
+    if (this.getConnectParams) {
+      try {
+        const params = await this.getConnectParams();
+        connectUrl = params.url;
+        protocols = params.protocols;
+      } catch (err) {
+        console.warn('[Network] getConnectParams failed, falling back to static URL', err);
+      }
+    }
+
+    if (protocols && protocols.length > 0) {
+      this.socket = new WebSocket(connectUrl, protocols);
+    } else {
+      this.socket = new WebSocket(connectUrl);
+    }
     this.socket.binaryType = 'arraybuffer';
 
     const socket = this.socket;

@@ -39,3 +39,15 @@
 - åœ¨æ²’æœ‰é‡æ¸¬å‰å„ªåŒ– JSON serializationã€WASM size æˆ– relay placementã€‚
 - è¦æ±‚ Proxy æ”¯æ´æ‰€æœ‰ JavaScript åŸç”Ÿç‰©ä»¶èªæ„ï¼›æ‡‰å…ˆæ±ºå®šæœ€å°æ˜ç¢º contractã€‚
 - å°‡ awareness çš„ transient protocol æ”¹æˆ CRDT persistenceï¼›ç›®å‰åˆ†é›¢æ–¹å‘åˆç†ã€‚
+
+---
+
+## 5. Phase 1 (YoinSpace 2.0) °õ¦æ²{ªp§ó·s (2026-10-21)
+
+- **YOIN-001 (ACK »P¥i¾a­«°e)**¡G¤w¦b Phase 1 (Y-04) ³z¹L Protocol v2 MSG_UPDATE_ACK (17)¡B§Ç¸¹°lÂÜ¡BpendingUpdates »P synced ª¬ºA¥ş­±§¹¦¨¡C
+- **YOIN-003 (¦w¥ş¼Ò«¬»P©Ğ¶¡Åv­­)**¡G¬[ºc¨Mµ¦ (D1 B¡÷A) ¨M©w¥Ñ Rust Åv«Â¦øªA¾¹ (yoin-sync-server) ©ó³s½u´¤¤â¶¥¬q³z¹L Ticket / JWT ÅçÃÒ¡A¨Ã¥H MSG_HELLO (16) ÂĞ¼g¨­¤À»P°ßÅªÅv­­¡C
+- **YOIN-004 (Undo/Redo)**¡GWASM expand_undo_scope_for »P«È¤áºİ´¡¥ó¥ş®e¾¹ Undo ¤w¾ã¦X¡C
+- **YOIN-005 (Proxy Contract)**¡G¤w¦b Y-10 ©ú½T¨î©w¾Ş§@«´¬ù¡A¨Ã¹ïª½±µ¯Á¤Ş½á­È»P¤£¤ä´©ªº¤èªk©ß¥X TypeError¡C
+- **YOIN-006 (Plugin ¥Í©R¶g´Á)**¡G¤w¦b Y-11 ¹ê§@ onInstall ¥¢±Ñ¦Û°Ê¦^ºu»P destroy() «D¦P¨B´`§Çµ¥«İ¡C
+- **YOIN-007 (ª©¥»²Î¤@»P Repo ¾ã²z)**¡G¤w¦b Y-09 ²¾°£ repo ¤¤©Ò¦³ *.tgz¡A¦P¨B root/core/client ¬° 0.1.2¡A¨Ã©ó integrity test ¤¤±j¨îÅçÃÒ¡C
+- **YOIN-009 (¤å¥ó»P«¬§O¤@­P)**¡GNetworkStatus ¤w¸É»ô 'synced' »P 'failed'¡Adocs/API.md »P docs/ARCHITECTURE.md ¤w¥ş­±¦P¨B¡C

@@ -24,6 +24,9 @@ const MSG_SYNC_STEP_2 = 1;
 const MSG_SYNC_STEP_1_REPLY = 2;
 const MSG_AWARENESS = 3;
 const MSG_JOIN_ROOM = 4;
+const MSG_HELLO = 16;
+const MSG_UPDATE_ACK = 17;
+const MSG_ERROR = 18;
 
 interface UpdateScope {
   kind: 'text' | 'map' | 'array';
@@ -61,8 +64,8 @@ export class YoinClient {
 
   // Awareness System Properties
   private myClientId = Math.random().toString(36).substring(2, 10);
-  private awarenessStates: Map<string, AwarenessState> = new Map();
-  private awarenessListeners: AwarenessCallback[] = [];
+  private awarenessStates: Map<string, AwarenessState<any>> = new Map();
+  private awarenessListeners: AwarenessCallback<any>[] = [];
 
   // Throttle Mechanism
   private awarenessTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -73,6 +76,11 @@ export class YoinClient {
   private gcTimer: ReturnType<typeof setInterval> | undefined;
 
   private networkListeners: ((status: NetworkStatus) => void)[] = [];
+
+  // Server-authoritative sequence & pending tracking (Y-04)
+  private updateSeq = 0;
+  private pendingUpdates: Map<number, Uint8Array> = new Map();
+  private isReadOnly = false;
 
   // ==========================================
   // Constructor (Lightweight Initialization)
@@ -96,6 +104,12 @@ export class YoinClient {
     } else {
       roomUrl.searchParams.append('room', config.docId);
     }
+
+    const networkOpts = {
+      ...config.networkOptions,
+      autoConnect: config.autoConnect !== false,
+      getConnectParams: config.getConnectParams,
+    };
 
     this.network = new NetworkProvider(
       roomUrl.toString(),
@@ -150,10 +164,22 @@ export class YoinClient {
 
           case MSG_SYNC_STEP_2: {
             if (this.hasNonEmptyUpdate(payload)) {
-              this.doc.apply_update(payload);
-              this.notifyListeners();
-              this.plugins.forEach((p) => p.onAfterUpdate?.(payload));
-              this.emitDocUpdate(payload);
+              try {
+                const scopes = this.doc.apply_update(payload) as
+                  | UpdateScope[]
+                  | undefined;
+                if (scopes && scopes.length > 0) {
+                  this.notifyScopedListeners(scopes);
+                } else {
+                  this.notifyListeners();
+                }
+                this.plugins.forEach((p) => p.onAfterUpdate?.(payload));
+                this.emitDocUpdate(payload);
+              } catch (e) {
+                const err = e instanceof Error ? e : new Error(String(e));
+                console.error('[Yoin] apply_update failed:', err);
+                this.config.onError?.(err);
+              }
             }
             break;
           }
@@ -173,6 +199,48 @@ export class YoinClient {
             }
             break;
           }
+
+          case MSG_HELLO: {
+            try {
+              const info = JSON.parse(new TextDecoder().decode(payload));
+              if (info.userId) {
+                this.myClientId = String(info.userId);
+              }
+              if (info.role === 'viewer') {
+                this.isReadOnly = true;
+              }
+              console.log('[Yoin] Received HELLO from server:', info);
+            } catch (e) {
+              console.warn('[Yoin] Failed to parse HELLO payload', e);
+            }
+            break;
+          }
+
+          case MSG_UPDATE_ACK: {
+            if (payload.length >= 4) {
+              const ackSeq = new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0, false);
+              this.pendingUpdates.delete(ackSeq);
+              if (this.pendingUpdates.size === 0) {
+                this.notifyNetworkListeners('synced');
+              }
+            }
+            break;
+          }
+
+          case MSG_ERROR: {
+            try {
+              const errorInfo = JSON.parse(new TextDecoder().decode(payload));
+              console.error('[Yoin] Server returned error:', errorInfo);
+              if (errorInfo.code === 'FORBIDDEN_READONLY') {
+                this.isReadOnly = true;
+              }
+              const err = new Error(`[Server Error] ${errorInfo.code}: ${errorInfo.message}`);
+              this.config.onError?.(err);
+            } catch (e) {
+              console.warn('[Yoin] Failed to parse ERROR payload', e);
+            }
+            break;
+          }
         }
       },
 
@@ -181,7 +249,7 @@ export class YoinClient {
         this.notifyNetworkListeners(status);
       },
 
-      config.networkOptions,
+      networkOpts,
     );
 
     this.startHeartbeat();
@@ -235,10 +303,39 @@ export class YoinClient {
   // ==========================================
 
   public use(plugin: YoinPlugin): this {
-    this.plugins.push(plugin);
-    plugin.onInstall(this);
-    console.log(`[Plugin] Installed: ${plugin.name}`);
+    if (this.plugins.some((p) => p.name === plugin.name)) {
+      console.warn(`[Plugin] Plugin '${plugin.name}' is already installed.`);
+      return this;
+    }
+
+    try {
+      const res = plugin.onInstall(this);
+      if (res && typeof (res as any).then === 'function') {
+        (res as Promise<void>).catch((err) => {
+          this.rollbackPlugin(plugin, err);
+        });
+      }
+      this.plugins.push(plugin);
+      console.log(`[Plugin] Installed: ${plugin.name}`);
+    } catch (err) {
+      this.rollbackPlugin(plugin, err);
+      throw err;
+    }
+
     return this;
+  }
+
+  private rollbackPlugin(plugin: YoinPlugin, err: unknown): void {
+    const idx = this.plugins.indexOf(plugin);
+    if (idx !== -1) {
+      this.plugins.splice(idx, 1);
+    }
+    try {
+      void plugin.onDestroy?.();
+    } catch {
+      // ignore secondary errors during rollback
+    }
+    console.error(`[Plugin] Installation failed for '${plugin.name}':`, err);
   }
 
   // ==========================================
@@ -277,9 +374,29 @@ export class YoinClient {
     update: Uint8Array,
     scopes?: UpdateScope | UpdateScope[],
   ): void {
+    if (this.isReadOnly) {
+      console.warn('[Yoin] Document is in read-only mode. Mutation rejected.');
+      return;
+    }
+
     this.plugins.forEach((p) => p.onBeforeUpdate?.(update));
-    const msg = this.encodeMessage(MSG_SYNC_STEP_2, update);
-    this.network.broadcast(msg);
+
+    if (this.config.mode === 'server') {
+      this.updateSeq++;
+      const seq = this.updateSeq;
+      this.pendingUpdates.set(seq, update);
+
+      // Packet format: [MSG_SYNC_STEP_2, seq: u32_be, ...update]
+      const packet = new Uint8Array(1 + 4 + update.length);
+      packet[0] = MSG_SYNC_STEP_2;
+      new DataView(packet.buffer).setUint32(1, seq, false);
+      packet.set(update, 5);
+      this.network.broadcast(packet);
+    } else {
+      const msg = this.encodeMessage(MSG_SYNC_STEP_2, update);
+      this.network.broadcast(msg);
+    }
+
     if (scopes) {
       this.notifyScopedListeners(scopes);
     } else {
@@ -294,14 +411,14 @@ export class YoinClient {
   // Awareness Public API
   // ==========================================
 
-  public setAwareness(partial: AwarenessPartial) {
+  public setAwareness(partial: AwarenessPartial<any>) {
     const current = this.awarenessStates.get(this.myClientId);
-    const fullState: AwarenessState = {
+    const fullState: AwarenessState<any> = {
       ...current,
       ...partial,
       clientId: this.myClientId,
       timestamp: Date.now(),
-    } as AwarenessState;
+    } as AwarenessState<any>;
 
     this.awarenessStates.set(this.myClientId, fullState);
     this.notifyAwarenessListeners();
@@ -324,7 +441,7 @@ export class YoinClient {
   }
 
   public onAwarenessChange(
-    callback: AwarenessCallback,
+    callback: AwarenessCallback<any>,
   ): () => void {
     this.awarenessListeners.push(callback);
     callback(this.awarenessStates);
@@ -405,8 +522,15 @@ export class YoinClient {
     if (this.gcTimer) clearInterval(this.gcTimer);
     if (this.awarenessTimeout) clearTimeout(this.awarenessTimeout);
 
-    for (const plugin of this.plugins) {
-      await plugin.onDestroy?.();
+    const activePlugins = [...this.plugins];
+    this.plugins = [];
+
+    for (const plugin of activePlugins) {
+      try {
+        await plugin.onDestroy?.();
+      } catch (e) {
+        console.error(`[Plugin] Error destroying '${plugin.name}':`, e);
+      }
     }
 
     this.leaveAwareness();
@@ -530,6 +654,44 @@ export class YoinClient {
     return text ? [{ insert: text }] : [];
   }
 
+  /**
+   * Create a permanent relative position byte array for a text index (Y-07).
+   * Supports both `createRelativePosition(index, assoc?, textName?)` and
+   * `createRelativePosition(textName, index, assoc?)`.
+   */
+  public createRelativePosition(
+    textNameOrIndex: string | number,
+    indexOrAssoc: number = 0,
+    assocOrName: number | string = 0,
+  ): Uint8Array {
+    let textName: string;
+    let index: number;
+    let assoc: number;
+
+    if (typeof textNameOrIndex === 'number') {
+      index = textNameOrIndex;
+      assoc = typeof indexOrAssoc === 'number' ? indexOrAssoc : 0;
+      textName = typeof assocOrName === 'string' ? assocOrName : 'content';
+    } else {
+      textName = textNameOrIndex;
+      index = indexOrAssoc;
+      assoc = typeof assocOrName === 'number' ? assocOrName : 0;
+    }
+
+    return (this.doc as any).create_relative_position(textName, index, assoc);
+  }
+
+  /**
+   * Resolve a relative position byte array back to the current absolute index (Y-07).
+   * Returns `{ index: number; assoc: number }` or `null` if the reference block was deleted/invalid.
+   */
+  public resolveRelativePosition(
+    relPos: Uint8Array,
+  ): { index: number; assoc: number } | null {
+    const res = (this.doc as any).resolve_relative_position(relPos);
+    return res && typeof res === 'object' && 'index' in res ? res : null;
+  }
+
   public subscribe(
     listener: (text: string) => void,
   ): () => void {
@@ -543,6 +705,11 @@ export class YoinClient {
     textName: string,
     listener: (text: string, delta: TextDeltaOp[]) => void,
   ): () => void {
+    try {
+      this.doc.get_text(textName);
+    } catch {
+      // Ignored if mock doc doesn't have get_text
+    }
     let set = this.textListeners.get(textName);
     if (!set) {
       set = new Set();
@@ -634,6 +801,39 @@ export class YoinClient {
     this.applyLocalUpdate(deltaUpdate, { kind: 'map', name: mapName });
   }
 
+  /**
+   * Insert or overwrite a nested map under `mapName[key]`.
+   * Essential for property-level CRDT merges on whiteboard shapes and cards!
+   */
+  public async setNested(
+    mapName: string,
+    key: string,
+    entries: Record<string, any>,
+  ): Promise<void> {
+    const deltaUpdate = (this.doc as any).map_insert_nested(
+      mapName,
+      key,
+      entries,
+    ) as Uint8Array;
+    this.applyLocalUpdate(deltaUpdate, { kind: 'map', name: mapName });
+  }
+
+  /**
+   * Update one or more properties of an existing nested map under `mapName[key]`.
+   */
+  public async updateNested(
+    mapName: string,
+    key: string,
+    updates: Record<string, any>,
+  ): Promise<void> {
+    const deltaUpdate = (this.doc as any).map_update_nested(
+      mapName,
+      key,
+      updates,
+    ) as Uint8Array;
+    this.applyLocalUpdate(deltaUpdate, { kind: 'map', name: mapName });
+  }
+
   public batchSet(entries: [string, string, any][]): void {
     if (!entries || entries.length === 0) return;
 
@@ -655,6 +855,11 @@ export class YoinClient {
     mapName: string,
     listener: (data: T) => void,
   ): () => void {
+    try {
+      this.doc.map_get_all(mapName);
+    } catch {
+      // Ignored if mock doc doesn't have map_get_all
+    }
     let set = this.mapListeners.get(mapName);
     if (!set) {
       set = new Set();
@@ -752,6 +957,11 @@ export class YoinClient {
     arrayName: string,
     listener: (data: T[]) => void,
   ): () => void {
+    try {
+      this.doc.array_get_all(arrayName);
+    } catch {
+      // Ignored if mock doc doesn't have array_get_all
+    }
     let set = this.arrayListeners.get(arrayName);
     if (!set) {
       set = new Set();
@@ -806,12 +1016,16 @@ export class YoinClient {
    * Notifies only the listeners for the modified container(s) plus general `subscribe` listeners.
    */
   private notifyScopedListeners(scopes: UpdateScope | UpdateScope[]): void {
-    if (this.listeners.length > 0) {
-      const text = this.getText();
-      this.listeners.forEach((listener) => listener(text));
-    }
-
     const list = Array.isArray(scopes) ? scopes : [scopes];
+    if (this.listeners.length > 0) {
+      const touchesContent = list.some(
+        (s) => s.kind === 'text' && (s.name === 'content' || !s.name),
+      );
+      if (touchesContent) {
+        const text = this.getText();
+        this.listeners.forEach((listener) => listener(text));
+      }
+    }
     for (const scope of list) {
       if (scope.kind === 'map') {
         const set = this.mapListeners.get(scope.name);
@@ -946,7 +1160,7 @@ export class YoinClient {
     return this.getArray(arrayName);
   }
 
-  public getAwarenessStates() {
-    return this.awarenessStates;
+  public getAwarenessStates<T = Record<string, any>>(): Map<string, AwarenessState<T>> {
+    return this.awarenessStates as Map<string, AwarenessState<T>>;
   }
 }

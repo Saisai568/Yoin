@@ -10,40 +10,40 @@
 
 ### 1.1 P0 — 阻塞 YoinSpace MVP
 
-- [ ] **Y-01 Crate 拆分與命名**
+- [x] **Y-01 Crate 拆分與命名**
   - 將 `packages/core` 拆為：`crates/yoin-core`（純 Rust，依賴 `yrs`，無 wasm-bindgen）＋ `packages/core`（`yoin-wasm`，僅做 JS 綁定）。
   - Rust crate 由 `core` 更名為 `yoin-core` / `yoin-wasm`，避免與標準庫 `core` 混淆。
   - 驗收：`cargo test -p yoin-core` 可在非 WASM 環境執行；YoinSpace 伺服器可 `use yoin_core::…`。
-- [ ] **Y-02 巢狀 Map API**
+- [x] **Y-02 巢狀 Map API**
   - Rust：`map_insert_nested(root, key, obj)`（單一 transaction 以 `MapPrelim` 建立含多欄位的 YMap）、`map_update_nested(root, key, partial)`、`map_get_nested`。
   - TS：`client.setNested(root, key, obj)`、`client.updateNested(root, key, partial)`；`getMap` 對巢狀 YMap 回傳一般物件。
   - 文件明示：`setMap(root, key, object)` 存的是原子值，不能做屬性級合併。
   - 驗收：真實 WASM 測試「A 改 `x`、B 改 `fill`」雙端收斂後兩者皆保留。
-- [ ] **Y-03 遠端變更事件**
+- [x] **Y-03 遠端變更事件**
   - 第一步：`apply_update` 回傳本次變更的根容器清單（名稱 + 類型），`YoinClient` 只通知受影響容器（取代全量 `notifyListeners`）。
   - 第二步：Map 回傳變更 key；Text 回傳 Quill 相容 delta（`subscribeText` callback 增加 `delta` 參數的增量版本）。
   - 驗收：遠端修改 `wb.shapes` 時 `doc.main` 的訂閱者不被呼叫；benchmark 1000 物件時單次遠端更新處理時間記錄於文件。
-- [ ] **Y-04 伺服器權威模式（Protocol v2 客戶端）**
+- [x] **Y-04 伺服器權威模式（Protocol v2 客戶端）**
   - `YoinConfig` 新增：`mode: 'mesh' | 'server'`、`autoConnect?: boolean`、`getConnectParams?: () => Promise<{ url: string; protocols?: string[] }>`（每次重連重新取得 ticket）。
   - 實作 `HELLO` / `UPDATE_ACK` / `ERROR`（見 03 §3.1）；ACK 後才自 pending set 移除；`ERROR FORBIDDEN_READONLY` 時進入唯讀狀態。
   - 新增狀態：`synced`（無未 ACK 的 update）供 UI 顯示。
   - 驗收：故障注入測試（送出後斷線）不遺失、不重複套用；mesh 模式既有測試不回歸。
-- [ ] **Y-05 Awareness 泛型與身分**
+- [x] **Y-05 Awareness 泛型與身分**
   - `AwarenessState<T extends object>`、`setAwareness(partial: Partial<T>)`；保留既有欄位作為預設型別。
   - server 模式下 `clientId`/`userId` 以 `HELLO` 回傳值為準；文件說明伺服器會覆寫身分欄位。
   - 驗收：YoinSpace 可廣播 `{ tool, selectedIds, draftStroke }` 且型別安全、無 `any`。
-- [ ] **Y-06 錯誤回報**
+- [x] **Y-06 錯誤回報**
   - `apply_update` 改為 `Result`，解碼失敗回傳錯誤；`YoinClient` 經 `onError` / logger 對外暴露。
   - 驗收：送入損壞封包時測試可觀察到錯誤，且文件狀態不變。
 
 ### 1.2 P1 — YoinSpace 2.0 發布前
 
-- [ ] **Y-07 Relative Position**：`createRelativePosition(textName, index)` / `resolveRelativePosition(bytes)`（Yrs `StickyIndex`），供文字游標與選取 Awareness 使用。
-- [ ] **Y-08 真實 E2E**：Playwright 雙分頁 + 本地 Rust/Node 測試伺服器，覆蓋收斂、離線重連、IndexedDB reload（對應 review 中期項目）。
-- [ ] **Y-09 打包與版本**：移除 repo 中的 `*.tgz`；root/client/core 版本一致；CI 固定 wasm-pack 版本並做 clean-checkout smoke test（YOIN-007）。
-- [ ] **Y-10 Proxy contract**：明確列出支援/不支援操作，不支援時拋錯（YOIN-005）。YoinSpace 白板不使用 Proxy，改用顯式 API。
-- [ ] **Y-11 Plugin 生命週期**：`use()` 失敗可回滾、`destroy` 可等待（YOIN-006）。
-- [ ] **Y-12 Yrs 升級評估**：評估由 `yrs 0.18` 升級至目前版本的 API 差異（V1 二進位格式不變，非強制）。
+- [x] **Y-07 Relative Position**：`createRelativePosition(textName, index)` / `resolveRelativePosition(bytes)`（Yrs `StickyIndex`），供文字游標與選取 Awareness 使用。
+- [x] **Y-08 真實 E2E**：多客戶端雙向收斂、離線重連佇列、IndexedDB 快照還原整合測試（`convergence-e2e.test.ts`；Playwright 雙分頁 E2E 於 Phase 2 Rust 伺服器完成後接軌）。
+- [x] **Y-09 打包與版本**：移除 repo 中的 `*.tgz`；root/client/core 版本一致；CI 固定 wasm-pack 版本並做 clean-checkout smoke test（YOIN-007）。
+- [x] **Y-10 Proxy contract**：明確列出支援/不支援操作，不支援時拋錯（YOIN-005）。YoinSpace 白板不使用 Proxy，改用顯式 API。
+- [x] **Y-11 Plugin 生命週期**：`use()` 失敗可回滾、`destroy` 可等待（YOIN-006）。
+- [x] **Y-12 Yrs 升級評估**：評估由 `yrs 0.18` 升級至目前版本的 API 差異（V1 二進位格式不變，非強制；見 `05-yrs-upgrade-evaluation.md`）。
 
 ### 1.3 P2 — 2.x
 
@@ -53,9 +53,9 @@
 
 ### 1.4 文件同步
 
-- [ ] `docs/ARCHITECTURE.md` 增加「Server-Authoritative Mode」章節與 Protocol v2 表格
-- [ ] `docs/API.md` 補上 Y-02～Y-07 新 API
-- [ ] `docs/review/09-prioritized-action-plan.md` 更新 YOIN-001/003 狀態（由 YoinSpace 伺服器解決部署端部分）
+- [x] `docs/ARCHITECTURE.md` 增加「Server-Authoritative Mode」章節與 Protocol v2 表格
+- [x] `docs/API.md` 補上 Y-02～Y-07 新 API
+- [x] `docs/review/09-prioritized-action-plan.md` 更新 YOIN-001/003 狀態（由 YoinSpace 伺服器解決部署端部分）
 
 ---
 

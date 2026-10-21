@@ -265,6 +265,34 @@ class MockYoinDoc {
     return this.encodeCurrentAsUpdate(16);
   }
 
+  map_insert_nested(
+    rootMapName: string,
+    key: string,
+    entries: Record<string, any>,
+  ): Uint8Array {
+    this.captureUndoState();
+    const root = { ...(this.maps.get(rootMapName) || {}) };
+    root[key] = cloneDeep(entries);
+    this.maps.set(rootMapName, root);
+    return this.encodeCurrentAsUpdate(21);
+  }
+
+  map_update_nested(
+    rootMapName: string,
+    key: string,
+    updates: Record<string, any>,
+  ): Uint8Array {
+    this.captureUndoState();
+    const root = { ...(this.maps.get(rootMapName) || {}) };
+    const current =
+      root[key] && typeof root[key] === 'object' && !Array.isArray(root[key])
+        ? root[key]
+        : {};
+    root[key] = { ...current, ...cloneDeep(updates) };
+    this.maps.set(rootMapName, root);
+    return this.encodeCurrentAsUpdate(22);
+  }
+
   map_set_deep(rootMapName: string, path: any[], value: any): Uint8Array {
     if (!path || path.length === 0) {
       throw new Error('Path cannot be empty');
@@ -348,8 +376,9 @@ class MockYoinDoc {
     return this.encodeCurrentAsUpdate(6);
   }
 
-  apply_update(update: Uint8Array): void {
-    if (!update || update.byteLength === 0) return;
+  apply_update(update: Uint8Array): Array<{ kind: 'text' | 'map' | 'array'; name: string }> {
+    const scopes: Array<{ kind: 'text' | 'map' | 'array'; name: string }> = [];
+    if (!update || update.byteLength === 0) return scopes;
     try {
       const text = new TextDecoder().decode(update);
       const parsed = JSON.parse(text);
@@ -357,17 +386,20 @@ class MockYoinDoc {
         if (parsed.texts && typeof parsed.texts === 'object') {
           for (const [k, v] of Object.entries(parsed.texts)) {
             this.texts.set(k, v as CharItem[]);
+            scopes.push({ kind: 'text', name: k });
           }
         }
         if (parsed.maps && typeof parsed.maps === 'object') {
           for (const [k, v] of Object.entries(parsed.maps)) {
             const existing = this.maps.get(k) || {};
             this.maps.set(k, { ...existing, ...(v as Record<string, any>) });
+            scopes.push({ kind: 'map', name: k });
           }
         }
         if (parsed.arrays && typeof parsed.arrays === 'object') {
           for (const [k, v] of Object.entries(parsed.arrays)) {
             this.arrays.set(k, v as any[]);
+            scopes.push({ kind: 'array', name: k });
           }
         }
         this.stateVersion = Math.max(this.stateVersion, parsed.v || 0);
@@ -375,6 +407,7 @@ class MockYoinDoc {
     } catch {
       // Non-JSON raw bytes passed in unit tests — ignore safely
     }
+    return scopes;
   }
 
   export_update(): Uint8Array {
@@ -395,6 +428,23 @@ class MockYoinDoc {
 
   get_missing_updates(clientSv: Uint8Array): Uint8Array {
     return this.export_diff(clientSv);
+  }
+
+  create_relative_position(name: string, index: number, assoc: number = 0): Uint8Array {
+    const payload = JSON.stringify({ __rel_pos: true, name, index, assoc });
+    return new TextEncoder().encode(payload);
+  }
+
+  resolve_relative_position(bytes: Uint8Array): { index: number; assoc: number } | null {
+    try {
+      const parsed = JSON.parse(new TextDecoder().decode(bytes));
+      if (parsed && parsed.__rel_pos) {
+        return { index: parsed.index, assoc: parsed.assoc };
+      }
+    } catch {
+      // ignore
+    }
+    return null;
   }
 
   snapshot(): Uint8Array {

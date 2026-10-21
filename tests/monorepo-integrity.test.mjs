@@ -74,6 +74,8 @@ assert(corePkg.private === false, 'Core package is publishable');
 const clientPkg = readJSON('packages/client/package.json');
 assert(clientPkg.name === '@yoin/client', 'Client package name is @yoin/client');
 assert(clientPkg.version === '0.1.2', 'Client version is 0.1.2');
+assert(rootPkg.version === clientPkg.version, 'Root and client package versions match');
+assert(corePkg.version === clientPkg.version, 'Core and client package versions match');
 assert(clientPkg.type === 'module', 'Client is ESM module');
 
 // ============================================================
@@ -83,7 +85,7 @@ console.log('\n=== 3. Cross-Package Dependencies ===');
 
 assert(
   clientPkg.devDependencies?.['@yoin/core'] === 'workspace:*',
-  '@yoin/client devDepends on @yoin/core (workspace:*) — bundled at build time',
+  '@yoin/client devDepends on @yoin/core (workspace:*) ??bundled at build time',
 );
 
 if (fileExists('apps/demo/package.json')) {

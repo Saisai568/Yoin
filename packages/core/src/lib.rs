@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encode, Encoder};
-use yrs::{Any, Array, Doc, GetString, Map, MapPrelim, ReadTxn, StateVector, Text, Transact, Update, Origin};
+use yrs::{Any, Array, Assoc, Doc, GetString, IndexedSequence, Map, MapPrelim, Origin, ReadTxn, StateVector, StickyIndex, Text, Transact, Update};
 use yrs::types::{Attrs, ToJson, Value};
 use yrs::types::text::YChange;
 use yrs::updates::decoder::DecoderV1;
@@ -107,6 +107,18 @@ struct DeltaOp {
     insert: Any,
     #[serde(skip_serializing_if = "Option::is_none")]
     attributes: Option<HashMap<String, Any>>,
+}
+
+#[derive(Serialize)]
+struct ContainerScope {
+    kind: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct ResolvedPosition {
+    index: u32,
+    assoc: i8,
 }
 
 #[wasm_bindgen]
@@ -339,6 +351,64 @@ impl YoinDoc {
         Ok(self.doc.transact().encode_diff_v1(&sv_before))
     }
 
+    /// Insert or replace a nested map at `root_map[key]` with given key-value entries in a single atomic transaction.
+    /// This enables property-level CRDT merges!
+    #[wasm_bindgen]
+    pub fn map_insert_nested(&self, root_map_name: &str, key: &str, entries_obj: JsValue) -> Result<Vec<u8>, JsValue> {
+        let sv_before = self.doc.transact().state_vector();
+        {
+            let root = self.doc.get_or_insert_map(root_map_name);
+            let mut txn = self.doc.transact_mut_with(origin_local());
+
+            let mut map_entries: HashMap<String, Any> = HashMap::new();
+            if entries_obj.is_object() && !entries_obj.is_null() && !js_sys::Array::is_array(&entries_obj) {
+                let obj: &js_sys::Object = entries_obj.unchecked_ref();
+                let entries = js_sys::Object::entries(obj);
+                for i in 0..entries.length() {
+                    let pair = js_sys::Array::from(&entries.get(i));
+                    if let Some(k) = pair.get(0).as_string() {
+                        map_entries.insert(k, js_to_any(&pair.get(1)));
+                    }
+                }
+            }
+
+            let prelim = MapPrelim::from(map_entries);
+            root.insert(&mut txn, key, prelim);
+        }
+        Ok(self.doc.transact().encode_diff_v1(&sv_before))
+    }
+
+    /// Update multiple fields of an existing nested map at `root_map[key]`.
+    /// If the nested map doesn't exist, it will be created.
+    #[wasm_bindgen]
+    pub fn map_update_nested(&self, root_map_name: &str, key: &str, updates_obj: JsValue) -> Result<Vec<u8>, JsValue> {
+        let sv_before = self.doc.transact().state_vector();
+        {
+            let root = self.doc.get_or_insert_map(root_map_name);
+            let mut txn = self.doc.transact_mut_with(origin_local());
+
+            let nested_map = match root.get(&txn, key) {
+                Some(Value::YMap(m)) => m,
+                _ => {
+                    let empty: HashMap<String, Any> = HashMap::new();
+                    root.insert(&mut txn, key, MapPrelim::from(empty))
+                }
+            };
+
+            if updates_obj.is_object() && !updates_obj.is_null() && !js_sys::Array::is_array(&updates_obj) {
+                let obj: &js_sys::Object = updates_obj.unchecked_ref();
+                let entries = js_sys::Object::entries(obj);
+                for i in 0..entries.length() {
+                    let pair = js_sys::Array::from(&entries.get(i));
+                    if let Some(k) = pair.get(0).as_string() {
+                        nested_map.insert(&mut txn, k.as_str(), js_to_any(&pair.get(1)));
+                    }
+                }
+            }
+        }
+        Ok(self.doc.transact().encode_diff_v1(&sv_before))
+    }
+
     #[wasm_bindgen]
     pub fn map_set_deep(&self, root_map_name: &str, path: js_sys::Array, value: JsValue) -> Result<Vec<u8>, JsValue> {
         let path_len = path.length();
@@ -477,6 +547,35 @@ impl YoinDoc {
         to_js_value(&ops)
     }
 
+    /// Create a sticky relative position byte array for a given text container index (Y-07).
+    /// assoc < 0 leans left (Before), assoc >= 0 leans right (After).
+    pub fn create_relative_position(&self, name: &str, index: u32, assoc: i8) -> Result<Vec<u8>, JsValue> {
+        let text = self.doc.get_or_insert_text(name);
+        let mut txn = self.doc.transact_mut();
+        let yrs_assoc = if assoc < 0 { yrs::Assoc::Before } else { yrs::Assoc::After };
+        match text.sticky_index(&mut txn, index, yrs_assoc) {
+            Some(sticky) => Ok(sticky.encode_v1()),
+            None => Err(JsValue::from_str(&format!("Index {} out of bounds for text '{}'", index, name))),
+        }
+    }
+
+    /// Resolve a sticky relative position back to an absolute index in the current text document (Y-07).
+    pub fn resolve_relative_position(&self, bytes: &[u8]) -> Result<JsValue, JsValue> {
+        let sticky = yrs::StickyIndex::decode_v1(bytes)
+            .map_err(|e| JsValue::from_str(&format!("Failed to decode sticky index: {:?}", e)))?;
+        let txn = self.doc.transact();
+        match sticky.get_offset(&txn) {
+            Some(off) => {
+                let res = ResolvedPosition {
+                    index: off.index,
+                    assoc: if off.assoc == yrs::Assoc::Before { -1 } else { 0 },
+                };
+                Ok(to_js_value(&res))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
     /// Returns native JS object directly via serde-wasm-bindgen (no JSON stringify/parse)
     pub fn map_get_all(&self, map_name: &str) -> JsValue {
         let map = self.doc.get_or_insert_map(map_name);
@@ -522,12 +621,36 @@ impl YoinDoc {
     // 🔄 Sync & Remote Operations
     // ==========================================
 
-    pub fn apply_update(&self, update: &[u8]) {
+    pub fn apply_update(&self, update: &[u8]) -> Result<JsValue, JsValue> {
         // IMPORTANT: Use origin_remote() so UndoManager ignores these
+        let decoded = Update::decode_v1(update)
+            .map_err(|e| JsValue::from_str(&format!("Failed to decode update: {:?}", e)))?;
         let mut txn = self.doc.transact_mut_with(origin_remote());
-        if let Ok(update) = Update::decode_v1(update) {
-            txn.apply_update(update);
+        txn.apply_update(decoded);
+        txn.commit();
+
+        let mut scopes = Vec::new();
+        let mut seen = HashSet::new();
+
+        for branch in txn.changed_parent_types() {
+            let kind = match branch.type_ref() {
+                yrs::types::TypeRef::Text => "text",
+                yrs::types::TypeRef::Map => "map",
+                yrs::types::TypeRef::Array => "array",
+                _ => continue,
+            };
+            if let yrs::branch::BranchID::Root(name) = branch.id() {
+                let name_str = name.to_string();
+                if seen.insert((kind.to_string(), name_str.clone())) {
+                    scopes.push(ContainerScope {
+                        kind: kind.to_string(),
+                        name: name_str,
+                    });
+                }
+            }
         }
+
+        Ok(to_js_value(&scopes))
     }
 
     pub fn export_update(&self) -> Vec<u8> {

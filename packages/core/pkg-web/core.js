@@ -40,11 +40,24 @@ export class YoinDoc {
     }
     /**
      * @param {Uint8Array} update
+     * @returns {any}
      */
     apply_update(update) {
-        const ptr0 = passArray8ToWasm0(update, wasm.__wbindgen_export);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.yoindoc_apply_update(this.__wbg_ptr, ptr0, len0);
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(update, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.yoindoc_apply_update(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
     }
     /**
      * @param {string} array_name
@@ -166,6 +179,34 @@ export class YoinDoc {
             var v1 = getArrayU8FromWasm0(r0, r1).slice();
             wasm.__wbindgen_export4(r0, r1 * 1, 1);
             return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Create a sticky relative position byte array for a given text container index (Y-07).
+     * assoc < 0 leans left (Before), assoc >= 0 leans right (After).
+     * @param {string} name
+     * @param {number} index
+     * @param {number} assoc
+     * @returns {Uint8Array}
+     */
+    create_relative_position(name, index, assoc) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.yoindoc_create_relative_position(retptr, this.__wbg_ptr, ptr0, len0, index, assoc);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v2 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            return v2;
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
@@ -479,6 +520,36 @@ export class YoinDoc {
         return takeObject(ret);
     }
     /**
+     * Insert or replace a nested map at `root_map[key]` with given key-value entries in a single atomic transaction.
+     * This enables property-level CRDT merges!
+     * @param {string} root_map_name
+     * @param {string} key
+     * @param {any} entries_obj
+     * @returns {Uint8Array}
+     */
+    map_insert_nested(root_map_name, key, entries_obj) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(root_map_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.yoindoc_map_insert_nested(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1, addHeapObject(entries_obj));
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v3 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            return v3;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * @param {string} map_name
      * @param {string} key
      * @param {any} value
@@ -532,6 +603,36 @@ export class YoinDoc {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
     }
+    /**
+     * Update multiple fields of an existing nested map at `root_map[key]`.
+     * If the nested map doesn't exist, it will be created.
+     * @param {string} root_map_name
+     * @param {string} key
+     * @param {any} updates_obj
+     * @returns {Uint8Array}
+     */
+    map_update_nested(root_map_name, key, updates_obj) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passStringToWasm0(root_map_name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(key, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            const len1 = WASM_VECTOR_LEN;
+            wasm.yoindoc_map_update_nested(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1, addHeapObject(updates_obj));
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+            if (r3) {
+                throw takeObject(r2);
+            }
+            var v3 = getArrayU8FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export4(r0, r1 * 1, 1);
+            return v3;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
     constructor() {
         const ret = wasm.yoindoc_new();
         this.__wbg_ptr = ret >>> 0;
@@ -555,6 +656,28 @@ export class YoinDoc {
             var v1 = getArrayU8FromWasm0(r0, r1).slice();
             wasm.__wbindgen_export4(r0, r1 * 1, 1);
             return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Resolve a sticky relative position back to an absolute index in the current text document (Y-07).
+     * @param {Uint8Array} bytes
+     * @returns {any}
+     */
+    resolve_relative_position(bytes) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_export);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.yoindoc_resolve_relative_position(retptr, this.__wbg_ptr, ptr0, len0);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+            if (r2) {
+                throw takeObject(r1);
+            }
+            return takeObject(r0);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
@@ -743,7 +866,7 @@ function __wbg_get_imports() {
             const ret = getObject(arg0).node;
             return addHeapObject(ret);
         },
-        __wbg_now_6b0ae9e1bf9726e5: function() {
+        __wbg_now_bdf884ed4d0d0112: function() {
             const ret = Date.now();
             return ret;
         },

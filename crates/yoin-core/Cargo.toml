@@ -1,0 +1,15 @@
+[package]
+name = "yoin-core"
+version = "0.2.0"
+edition = "2024"
+description = "Pure Rust CRDT document engine based on Yrs for Yoin ecosystem"
+license = "MIT"
+
+[dependencies]
+yrs = "0.18"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+
+[dev-dependencies]
+

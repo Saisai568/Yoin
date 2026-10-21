@@ -1,4 +1,41 @@
-// packages/client/src/proxy.ts
+/**
+ * packages/client/src/proxy.ts
+ *
+ * Proxy Facades for Yoin CRDT Maps and Arrays (YOIN-005 contract).
+ *
+ * Contract & Supported Operations:
+ * -------------------------------------------------------------
+ * - MapProxy:
+ *   - Supported:
+ *     * Property read: `map.key` (reads live state from document)
+ *     * Property write: `map.key = value` (propagates via `client.setMap`)
+ *     * Deletion: `delete map.key` (propagates via `client.deleteMap`)
+ *     * Membership check: `'key' in map`
+ *     * Key reflection: `Object.keys(map)`, `for (const k in map)`
+ *     * Nested object read/write: `map.ui.sidebar.width = 300` (via `client.setMapDeep`)
+ *     * Serialization: `JSON.stringify(map)`
+ *   - Unsupported:
+ *     * Non-serializable values (functions, symbols) throw TypeError.
+ *
+ * - ArrayProxy:
+ *   - Supported:
+ *     * Index read: `arr[i]`
+ *     * Length: `arr.length`
+ *     * Tail mutation: `arr.push(...items)` (returns new live length)
+ *     * Pop: `arr.pop()`
+ *     * Shift: `arr.shift()`
+ *     * Unshift: `arr.unshift(...items)`
+ *     * Splice: `arr.splice(start, deleteCount, ...items)`
+ *     * Read-only iteration: `.slice()`, `.map()`, `.filter()`, `.forEach()`, `for (const item of arr)`
+ *   - Unsupported (throw TypeError):
+ *     * Direct index assignment: `arr[i] = value` is unsupported by CRDT sequence models without
+ *       explicit intention (insert vs replace). Use `client.insertArray`, `client.pushArray`, or `.splice()`.
+ *     * In-place unbounded mutations: `.sort()`, `.reverse()`, `.fill()`, `.copyWithin()`.
+ *
+ * NOTE FOR WHITEBOARD:
+ * YoinSpace 2.0 whiteboard shapes do NOT use Proxy facades. They use explicit, high-performance
+ * CRDT methods (`client.setNested`, `client.updateNested`) for 60FPS lock-free, property-level merges.
+ */
 import { YoinClient } from './YoinClient';
 
 // ==========================================
@@ -33,6 +70,11 @@ export function createMapProxy<T extends object>(
     },
 
     set(_target, prop, value) {
+      if (typeof value === 'function' || typeof value === 'symbol') {
+        throw new TypeError(
+          `[MapProxy] Cannot assign non-serializable value (${typeof value}) to key '${String(prop)}'.`,
+        );
+      }
       const key = String(prop);
       void client.setMap(mapName, key, value);
       return true;
@@ -73,6 +115,8 @@ export function createMapProxy<T extends object>(
 // ==========================================
 // 2. Array Proxy
 // ==========================================
+const UNSUPPORTED_ARRAY_METHODS = new Set(['sort', 'reverse', 'fill', 'copyWithin']);
+
 export function createArrayProxy<T>(
   client: YoinClient,
   arrayName: string,
@@ -88,6 +132,12 @@ export function createArrayProxy<T>(
 
   const handler: ProxyHandler<T[]> = {
     get(_target, prop, _receiver) {
+      if (typeof prop === 'string' && UNSUPPORTED_ARRAY_METHODS.has(prop)) {
+        throw new TypeError(
+          `[ArrayProxy] Array mutation method .${prop}() is not supported on CRDT ArrayProxy. Please use explicit CRDT operations.`,
+        );
+      }
+
       if (prop === 'push') {
         return (...items: T[]) => {
           items.forEach((item) => {
@@ -158,10 +208,9 @@ export function createArrayProxy<T>(
     },
 
     set(_target, prop, _value) {
-      console.warn(
-        `[ArrayProxy] Index assignment (${String(prop)}) is not supported. Please use .push()`,
+      throw new TypeError(
+        `[ArrayProxy] Direct index assignment (${String(prop)}) is not supported on CRDT arrays. Please use .push(), .splice(), or client.insertArray() instead.`,
       );
-      return true;
     },
 
     has(_target, prop) {
@@ -213,6 +262,11 @@ function createDeepProxy(
     },
 
     set(_target, prop, value) {
+      if (typeof value === 'function' || typeof value === 'symbol') {
+        throw new TypeError(
+          `[MapProxy] Cannot assign non-serializable value (${typeof value}) to nested path '${[...path, String(prop)].join('.')}'.`,
+        );
+      }
       const fullPath = [...path, String(prop)];
       client.setMapDeep(rootName, fullPath, value);
       return true;

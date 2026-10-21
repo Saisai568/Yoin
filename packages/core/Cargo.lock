@@ -40,20 +40,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "core"
-version = "0.1.2"
-dependencies = [
- "console_error_panic_hook",
- "getrandom",
- "js-sys",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "wasm-bindgen",
- "yrs",
-]
-
-[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -288,6 +274,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f01b580c9ac74c8d8f0c0e4afb04eeef2acf145458e52c03845ee9cd23e3d12"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "yoin-core"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "yrs",
+]
+
+[[package]]
+name = "yoin-wasm"
+version = "0.2.0"
+dependencies = [
+ "console_error_panic_hook",
+ "getrandom",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "wasm-bindgen",
+ "yoin-core",
+ "yrs",
 ]
 
 [[package]]
