@@ -59,3 +59,4 @@
 * **`pnpm lint:rules`**：全專案 0 違規（所有檔案均 ≤ 200 行、零 `any`、`engine/` 完全與 DOM/React 解耦）。
 * **`pnpm typecheck`**：`tsc --noEmit` 0 錯誤。
 * **`pnpm build`**：Vite 生產環境構建順利產出。
+

@@ -101,3 +101,4 @@ pub async fn post_message_handler(
     let msg = state.chat_store.add_message(&room_id, payload);
     Ok(Json(msg))
 }
+
