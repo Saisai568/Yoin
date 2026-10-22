@@ -18,6 +18,7 @@
 | [06-sync-server-implementation.md](06-sync-server-implementation.md) | Phase 2 權威同步伺服器實作報告（Actor 模型、Protocol v2、持久化與整合測試） |
 | [07-web-skeleton-implementation.md](07-web-skeleton-implementation.md) | Phase 3 前端骨架與連線整合實作報告（分層架構、V2 規範、useRoomSession） |
 | [08-whiteboard-module-implementation.md](08-whiteboard-module-implementation.md) | Phase 4 白板協同模組實作報告（Konva 渲染、幾何引擎、Fractional Indexing、巢狀 Map 並發合併） |
+| [09-editor-module-implementation.md](09-editor-module-implementation.md) | Phase 5 文字編輯器協同模組實作報告（Quill、Delta 增量綁定、Relative Position 游標整合） |
 
 ## 一頁結論
 
