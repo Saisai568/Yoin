@@ -57,6 +57,40 @@
 - [x] `docs/API.md` 補上 Y-02～Y-07 新 API
 - [x] `docs/review/09-prioritized-action-plan.md` 更新 YOIN-001/003 狀態（由 YoinSpace 伺服器解決部署端部分）
 
+### 1.5 Phase 2 — 權威同步伺服器 (crates/yoin-sync-server)
+
+- [x] **S-01 Cargo Workspace 配置**：建立 monorepo 根目錄 `Cargo.toml`，納入 `crates/yoin-core`、`crates/yoin-sync-server`、`packages/core`。
+- [x] **S-02 Protocol v2 編解碼器**：實作 `MSG_SYNC_STEP_1 (0)`、`MSG_SYNC_STEP_2 (1)`、`MSG_SYNC_STEP_1_REPLY (2)`、`MSG_AWARENESS (3)`、`MSG_JOIN_ROOM (4)`、`MSG_HELLO (16)`、`MSG_UPDATE_ACK (17)`、`MSG_ERROR (18)`。
+- [x] **S-03 短效 Ticket 認證系統**：`TicketStore` 支援 60 秒一次性憑據驗證與過期清理；支援 `Sec-WebSocket-Protocol: yoin.v2, bearer.<ticket>` 與 query params。
+- [x] **S-04 Room Actor 併發狀態機**：基於 Tokio Actor 模型，每房獨立 task 序列化處理訊息；維護 `YoinDocCore`，分配全域 `seq`，回覆 `UPDATE_ACK`，扇出廣播給房內其他成員。
+- [x] **S-05 權限與限流防禦**：`viewer` 角色提交寫入時即時攔截並回傳 `FORBIDDEN_READONLY`；更新 > 1MB 回傳 `TOO_LARGE`；損壞二進位回傳 `INVALID_UPDATE`；Token Bucket 限流（update ≤ 60/s, awareness ≤ 30/s）。
+- [x] **S-06 Awareness 身分覆寫防偽**：伺服器解析並注入驗證通過之 `userId`/`name`，防止惡意冒名偽造。
+- [x] **S-07 持久化與壓縮 (Compaction)**：`RoomStorage` trait 抽象，提供 `MemoryStorage` 與零依賴 `FileStorage`；update log append-only，滿 500 筆或 1MB 或閒置時壓縮快照並清除 log。
+- [x] **S-08 Axum REST & WebSocket 路由**：`/ws/sync/:room_id`、`POST /api/rooms/:id/ticket`、`GET /health`、`GET /api/admin/rooms`。
+- [x] **S-09 整合測試套件**：6 個真實 WebSocket 端到端情境（多客戶端收斂、ACK 確認、唯讀拒絕、超大封包拒絕、損壞二進位拒絕、重啟後快照與增量恢復）100% 通過。
+
+### 1.6 Phase 3 — 前端骨架與連線整合 (apps/web)
+
+- [x] **W-01 Vite + React 19 + TypeScript + WASM 整合**：配置 `apps/web`，支援 `@yoin/client`、`vite-plugin-wasm` 與 `vite-plugin-top-level-await`。
+- [x] **W-02 Config 層與 Zod 環境驗證**：`src/config/env.ts` 與 `src/config/constants.ts` 集中管理所有常數與伺服器端點。
+- [x] **W-03 Core Engine 層純 TS 隔離**：`src/engine/` 禁止 import React / DOM，定義 `WhiteboardShape` 與 `MetaSchema` Zod 結構。
+- [x] **W-04 Services 層**：`apiClient.ts`（REST 憑據與健康檢查）與 `yoinSession.ts`（動態短效 Ticket 換發與 Protocol v2 連線管理）。
+- [x] **W-05 Hooks 層**：`useAuth`（身分維護與客體登入）與 `useRoomSession`（房間狀態綁定、在線成員 Awareness、讀寫權限管理、斷線重試）。
+- [x] **W-06 UI 元件層**：`ConnectionBadge`（5 種同步狀態即時可視化）、`Header`、`RoomCard`、`CreateRoomModal`、`ErrorAlert`。
+- [x] **W-07 Feature 頁面與輕量路由**：`LandingPage`（大廳/建房）、`RoomPage`（權威 CRDT 工作區）、`AdminPage`（伺服器指標監看）。
+- [x] **W-08 V2 架構規範自動化檢查**：`scripts/lint-rules.mjs` 自動校驗無 `any`、單檔 ≤ 200 行、engine 純淨度；`tsc --noEmit` 0 錯誤；`vite build` 產出正常。
+
+### 1.7 Phase 4 — 白板協同模組 (apps/web/src/{engine,ui}/whiteboard)
+
+- [x] **WB-01 幾何與排序引擎 (Pure TS)**：`engine/whiteboard/geometry.ts`（座標換算、碰撞判定、外接框計算）與 `zIndex.ts`（Fractional Indexing 分數排序）。
+- [x] **WB-02 巢狀 Map 命令模式**：`engine/whiteboard/commands.ts`，嚴格依據 03 §4 規則 1 透過 `setNested` 與 `updateNested` 存取 `wb.shapes`，杜絕全物件覆寫。
+- [x] **WB-03 視圖平移與縮放 Hook**：`hooks/useCanvasViewport.ts`，滑鼠滾輪等比縮放（0.1x–5.0x）、空白鍵拖曳畫布與邊界防護。
+- [x] **WB-04 防禦性形狀訂閱 Hook**：`hooks/useWhiteboardShapes.ts`，透過 Zod 安全過濾無效形狀，依 Fractional Index 升序排列。
+- [x] **WB-05 畫布繪製與拖曳 Hook**：`hooks/useCanvasDrawing.ts`，平滑筆畫擷取、外接框自動規整化與游標 Awareness 即時廣播。
+- [x] **WB-06 Konva 形狀與草稿渲染**：`ui/whiteboard/ShapeRenderer.tsx`（Rect, Circle, Line, Arrow, Text）、`DraftRenderer.tsx`、`CursorLayer.tsx`（遠端游標與即時動態）。
+- [x] **WB-07 懸浮式白板工具列**：`ui/whiteboard/WhiteboardToolbar.tsx`，工具切換（V, R, C, P, A, T）、調色盤、筆刷粗細、縮放指示與刪除選取。
+- [x] **WB-08 雙端並發合併驗證 (DoD)**：自動化驗證客戶端 A 平移 `(x, y)` 與客戶端 B 改色 `(fill)` 於收斂後兩者屬性同時保留（Property-level CRDT merge）。
+
 ---
 
 ## 2. SyncSpace / YoinSpace 側：產品與資產準備

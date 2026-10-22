@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/yoin-core",
+    "crates/yoin-sync-server",
+    "packages/core",
+]
+

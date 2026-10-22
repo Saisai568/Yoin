@@ -14,6 +14,10 @@
 | [02-fit-gap-analysis.md](02-fit-gap-analysis.md) | 兩者適配性分析：SyncSpace 需求 × Yoin 能力差距矩陣 |
 | [03-refactor-plan.md](03-refactor-plan.md) | YoinSpace 2.0 目標架構、同步協定、資料模型、階段計畫與風險 |
 | [04-readiness-checklist.md](04-readiness-checklist.md) | 重構準備清單：Yoin 側（框架補強）與 SyncSpace 側（產品/資產準備） |
+| [05-yrs-upgrade-evaluation.md](05-yrs-upgrade-evaluation.md) | Yrs 0.18 vs 0.28+ 評估報告（二進位相容性與升級策略） |
+| [06-sync-server-implementation.md](06-sync-server-implementation.md) | Phase 2 權威同步伺服器實作報告（Actor 模型、Protocol v2、持久化與整合測試） |
+| [07-web-skeleton-implementation.md](07-web-skeleton-implementation.md) | Phase 3 前端骨架與連線整合實作報告（分層架構、V2 規範、useRoomSession） |
+| [08-whiteboard-module-implementation.md](08-whiteboard-module-implementation.md) | Phase 4 白板協同模組實作報告（Konva 渲染、幾何引擎、Fractional Indexing、巢狀 Map 並發合併） |
 
 ## 一頁結論
 

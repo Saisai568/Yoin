@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encode, Encoder};
-use yrs::{Any, Array, Assoc, Doc, GetString, IndexedSequence, Map, MapPrelim, Origin, ReadTxn, StateVector, StickyIndex, Text, Transact, Update};
+use yrs::{Any, Array, Doc, GetString, IndexedSequence, Map, MapPrelim, Origin, ReadTxn, StateVector, Text, Transact, Update};
 use yrs::types::{Attrs, ToJson, Value};
 use yrs::types::text::YChange;
 use yrs::updates::decoder::DecoderV1;

@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use yrs::types::text::YChange;
 use yrs::types::{Attrs, ToJson, Value};
-use yrs::undo::{Options, UndoManager};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
 use yrs::{Any, Array, Assoc, Doc, GetString, IndexedSequence, Map, MapPrelim, Origin, ReadTxn, StateVector, StickyIndex, Text, Transact, Update};
@@ -52,7 +51,6 @@ pub struct ResolvedPosition {
 
 pub struct YoinDocCore {
     doc: Doc,
-    undo_manager: Option<UndoManager<()>>,
 }
 
 impl YoinDocCore {
@@ -63,72 +61,11 @@ impl YoinDocCore {
 
         Self {
             doc,
-            undo_manager: None,
         }
     }
 
     pub fn doc(&self) -> &Doc {
         &self.doc
-    }
-
-    pub fn ensure_undo_manager(&mut self, now_ms: u64) {
-        if self.undo_manager.is_none() {
-            let content = self.doc.get_or_insert_text("content");
-            let root_map = self.doc.get_or_insert_map("root_map");
-
-            let options = Options {
-                capture_timeout_millis: 500,
-                tracked_origins: HashSet::from([origin_local()]),
-                capture_transaction: std::rc::Rc::new(|_| true),
-                timestamp: std::rc::Rc::new(move || now_ms),
-            };
-
-            let mut undo = UndoManager::<()>::with_options(&self.doc, &content, options);
-            undo.expand_scope(&root_map);
-            self.undo_manager = Some(undo);
-        }
-    }
-
-    pub fn expand_undo_scope_for(&mut self, type_name: &str, kind: &str, now_ms: u64) {
-        self.ensure_undo_manager(now_ms);
-        if let Some(ref mut mgr) = self.undo_manager {
-            match kind {
-                "text" => {
-                    let text = self.doc.get_or_insert_text(type_name);
-                    mgr.expand_scope(&text);
-                }
-                "array" => {
-                    let array = self.doc.get_or_insert_array(type_name);
-                    mgr.expand_scope(&array);
-                }
-                _ => {
-                    let map = self.doc.get_or_insert_map(type_name);
-                    mgr.expand_scope(&map);
-                }
-            }
-        }
-    }
-
-    pub fn undo(&mut self, now_ms: u64) -> Result<Vec<u8>, YoinError> {
-        self.ensure_undo_manager(now_ms);
-        let sv_before = self.doc.transact().state_vector();
-        let mgr = self.undo_manager.as_mut().unwrap();
-        match mgr.undo() {
-            Ok(true) => Ok(self.doc.transact().encode_diff_v1(&sv_before)),
-            Ok(false) => Ok(vec![]),
-            Err(e) => Err(YoinError::UndoError(format!("{:?}", e))),
-        }
-    }
-
-    pub fn redo(&mut self, now_ms: u64) -> Result<Vec<u8>, YoinError> {
-        self.ensure_undo_manager(now_ms);
-        let sv_before = self.doc.transact().state_vector();
-        let mgr = self.undo_manager.as_mut().unwrap();
-        match mgr.redo() {
-            Ok(true) => Ok(self.doc.transact().encode_diff_v1(&sv_before)),
-            Ok(false) => Ok(vec![]),
-            Err(e) => Err(YoinError::RedoError(format!("{:?}", e))),
-        }
     }
 
     // ==========================================

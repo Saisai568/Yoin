@@ -11,7 +11,9 @@
     "test:unit": "pnpm --filter @yoin/client test",
     "test:integration": "node tests/monorepo-integrity.test.mjs",
     "test:coverage": "pnpm --filter @yoin/client test:coverage",
-    "test:e2e": "pnpm --filter @yoin/demo exec playwright test",
+    "server:dev": "cargo run --package yoin-sync-server",
+    "server:test": "cargo test --package yoin-sync-server",
+    "cargo:test": "cargo test",
     "typecheck": "pnpm --filter @yoin/client typecheck",
     "clean": "pnpm -r exec rm -rf dist node_modules/.cache"
   },
