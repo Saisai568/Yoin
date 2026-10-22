@@ -62,6 +62,16 @@ impl RoomManager {
         stats_list
     }
 
+    /// Shutdown and remove a room actor from memory
+    pub async fn remove_room(&self, room_id: &str) -> bool {
+        if let Some((_, sender)) = self.rooms.remove(room_id) {
+            let _ = sender.send(RoomCommand::Shutdown).await;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Shutdown all rooms and flush persistence.
     pub async fn shutdown_all(&self) {
         for entry in self.rooms.iter() {

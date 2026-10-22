@@ -17,9 +17,13 @@ use yoin_sync_server::ws::AppState;
 async fn start_test_server(storage: Arc<dyn yoin_sync_server::storage::RoomStorage>) -> (String, Arc<AppState>) {
     let ticket_store = TicketStore::new();
     let room_manager = RoomManager::new(storage);
+    let chat_store = yoin_sync_server::chat::ChatStore::new(100);
+    let github_store = yoin_sync_server::github::GitHubStore::new();
     let state = Arc::new(AppState {
         room_manager,
         ticket_store,
+        chat_store,
+        github_store,
         allow_anonymous_dev: true,
     });
 
@@ -307,4 +311,100 @@ async fn test_ticket_auth_subprotocol_header_and_rejection() {
 
     let res = connect_async(fail_req).await;
     assert!(res.is_err(), "Expected connection with invalid ticket to fail");
+}
+
+#[tokio::test]
+async fn test_phase_6_integrated_endpoints() {
+    use tower::ServiceExt;
+    use axum::body::Body;
+    use axum::http::Request;
+
+    let storage = Arc::new(MemoryStorage::new());
+    let ticket_store = TicketStore::new();
+    let room_manager = RoomManager::new(storage);
+    let chat_store = yoin_sync_server::chat::ChatStore::new(100);
+    let github_store = yoin_sync_server::github::GitHubStore::new();
+    let state = Arc::new(AppState {
+        room_manager,
+        ticket_store,
+        chat_store,
+        github_store,
+        allow_anonymous_dev: true,
+    });
+    let app = create_router(state);
+
+    // 1. Chat: POST message
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/rooms/chat-room/messages")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "senderId": "u1",
+                "senderName": "Alice",
+                "senderColor": "#3b82f6",
+                "content": "Hello @bob, check out #1!",
+                "mentions": ["bob"]
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), 200);
+
+    // 2. Chat: GET messages
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/rooms/chat-room/messages")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), 200);
+    let body_bytes = axum::body::to_bytes(res.into_body(), 1024 * 64).await.unwrap();
+    let msgs: Vec<serde_json::Value> = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0]["senderName"], "Alice");
+
+    // 3. Voice: GET voice token
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/rooms/voice-room/voice-token?userId=u1&name=Alice")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), 200);
+    let body_bytes = axum::body::to_bytes(res.into_body(), 1024 * 64).await.unwrap();
+    let voice_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert!(voice_body["token"].as_str().unwrap().contains("dev_lk_jwt"));
+
+    // 4. GitHub: GET issues
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/github/issues")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), 200);
+
+    // 5. GitHub: PATCH issue state
+    let req = Request::builder()
+        .method("PATCH")
+        .uri("/api/github/issues/1/state")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({ "state": "open" })).unwrap(),
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), 200);
+
+    // 6. Admin System info
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/admin/system")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), 200);
 }

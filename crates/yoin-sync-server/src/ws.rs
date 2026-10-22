@@ -17,6 +17,8 @@ use uuid::Uuid;
 pub struct AppState {
     pub room_manager: RoomManager,
     pub ticket_store: TicketStore,
+    pub chat_store: crate::chat::ChatStore,
+    pub github_store: crate::github::GitHubStore,
     pub allow_anonymous_dev: bool,
 }
 

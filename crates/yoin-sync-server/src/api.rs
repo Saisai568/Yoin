@@ -78,3 +78,33 @@ pub async fn admin_rooms_handler(
         rooms: stats,
     })
 }
+
+#[derive(Serialize)]
+pub struct AdminSystemResponse {
+    pub version: &'static str,
+    pub status: &'static str,
+    #[serde(rename = "serverTime")]
+    pub server_time: i64,
+    pub protocol: &'static str,
+}
+
+pub async fn admin_system_handler() -> impl IntoResponse {
+    Json(AdminSystemResponse {
+        version: "0.2.0",
+        status: "healthy",
+        server_time: chrono::Utc::now().timestamp_millis(),
+        protocol: "yoin.v2",
+    })
+}
+
+pub async fn admin_delete_room_handler(
+    State(state): State<Arc<AppState>>,
+    Path(room_id): Path<String>,
+) -> impl IntoResponse {
+    let removed = state.room_manager.remove_room(&room_id).await;
+    if removed {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}

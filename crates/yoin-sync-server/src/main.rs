@@ -36,10 +36,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = Arc::new(FileStorage::new(&storage_dir));
     let room_manager = RoomManager::new(storage);
     let ticket_store = TicketStore::new();
+    let chat_store = yoin_sync_server::chat::ChatStore::new(1000);
+    let github_store = yoin_sync_server::github::GitHubStore::new();
 
     let state = Arc::new(AppState {
         room_manager: room_manager.clone(),
         ticket_store,
+        chat_store,
+        github_store,
         allow_anonymous_dev: allow_anon,
     });
 

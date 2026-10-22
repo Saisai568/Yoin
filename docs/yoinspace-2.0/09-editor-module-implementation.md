@@ -104,3 +104,4 @@ flowchart TD
    * 執行 `pnpm lint:rules`：所有檔案 ≤ 200 行，零 `any`，`engine/` 無 UI/DOM 依賴。
    * 執行 `pnpm typecheck`：`tsc --noEmit` 零錯誤。
    * 執行 `pnpm build`：Vite 生產環境打包無告警通過。
+

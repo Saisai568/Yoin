@@ -19,6 +19,7 @@
 | [07-web-skeleton-implementation.md](07-web-skeleton-implementation.md) | Phase 3 前端骨架與連線整合實作報告（分層架構、V2 規範、useRoomSession） |
 | [08-whiteboard-module-implementation.md](08-whiteboard-module-implementation.md) | Phase 4 白板協同模組實作報告（Konva 渲染、幾何引擎、Fractional Indexing、巢狀 Map 並發合併） |
 | [09-editor-module-implementation.md](09-editor-module-implementation.md) | Phase 5 文字編輯器協同模組實作報告（Quill、Delta 增量綁定、Relative Position 游標整合） |
+| [10-integration-module-implementation.md](10-integration-module-implementation.md) | Phase 6 綜合整合移植模組實作報告（伺服器權威聊天、LiveKit 語音、GitHub 看板、Admin 觀測站） |
 
 ## 一頁結論
 
